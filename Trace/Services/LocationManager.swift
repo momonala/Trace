@@ -33,7 +33,6 @@ class LocationManager: NSObject, ObservableObject {
     @Published private(set) var requiredMotionSeconds: Double
     
     private var startTimeForEstimate: Date?
-    private var significantLocationTimer: Timer?
     private var motionStartTime: Date?
     private var motionCheckTimer: Timer?
     
@@ -223,6 +222,7 @@ class LocationManager: NSObject, ObservableObject {
         motionManager.startActivityUpdates(to: .main) { [weak self] activity in
             guard let self = self else { return }
             if let activity = activity {
+                // Determine motion type
                 let newMotionType = activity.cycling ? "cycling" :
                     activity.automotive ? "automotive" :
                     activity.walking ? "walking" :
@@ -233,51 +233,62 @@ class LocationManager: NSObject, ObservableObject {
                 // Only handle changes in motion state
                 if newMotionType != self.currentMotionType {
                     self.currentMotionType = newMotionType
-                    
-                    // Determine if this is a motion type we should track
-                    let shouldTrack = ["cycling", "walking", "automotive", "running", "unknown"].contains(newMotionType)
-                    self.isTrackingMotionType = shouldTrack
-                    
-                    if shouldTrack {
-                        if self.requiredMotionSeconds == 0 {
-                            // Start tracking immediately if no delay is required
-                            self.switchToContinuousUpdates()
-                            Self.logger.info("🏃‍♂️ Motion detected, starting continuous updates.")
-                        } else {
-                            // Start timing the motion duration
-                            if self.motionStartTime == nil {
-                                self.motionStartTime = Date()
-                                self.startMotionTimer()
-                                // Self.logger.info("⏳ Motion detected, waiting \(Int(self.requiredMotionSeconds))s before tracking")
-                            }
-                        }
-                    } else {
-                        // Reset motion timing and switch to significant changes
-                        self.motionStartTime = nil
-                        self.motionCheckTimer?.invalidate()
-                        self.motionCheckTimer = nil
-                        self.switchToSignificantLocationChanges()
-                        // Self.logger.info("🛑 Motion stopped, switching to significant changes")
-                    }
+                    self.handleMotionTypeChange(newMotionType)
                 }
             }
         }
     }
     
-    private func startMotionTimer() {
-        motionCheckTimer?.invalidate()
-        motionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self,
-                  let startTime = self.motionStartTime else { return }
-            
-            let duration = Date().timeIntervalSince(startTime)
-            if duration >= self.requiredMotionSeconds {
-                self.motionCheckTimer?.invalidate()
-                self.motionCheckTimer = nil
-                self.switchToContinuousUpdates()
-                Self.logger.info("🏃‍♂️ Motion sustained for \(Int(duration))s, starting continuous updates")
+    private func handleMotionTypeChange(_ motionType: String) {
+        // Determine if this is a motion type we should track
+        let shouldTrack = ["cycling", "walking", "automotive", "running", "unknown"].contains(motionType)
+        isTrackingMotionType = shouldTrack
+        
+        if shouldTrack {
+            if requiredMotionSeconds == 0 {
+                // Start tracking immediately
+                switchToContinuousUpdates()
+                Self.logger.info("🏃‍♂️ Motion detected (\(motionType)), starting updates immediately")
+            } else {
+                startMotionTimer(motionType)
+            }
+        } else {
+            stopMotionTimer()
+            switchToSignificantLocationChanges()
+            Self.logger.info("🛑 Motion stopped (\(motionType)), switching to significant changes")
+        }
+    }
+    
+    private func startMotionTimer(_ motionType: String) {
+        // Clean up existing timer if any
+        stopMotionTimer()
+        
+        // Start new timing session
+        motionStartTime = Date()
+        motionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self = self,
+                      let startTime = self.motionStartTime else { 
+                    timer.invalidate()
+                    return 
+                }
+                
+                let duration = Date().timeIntervalSince(startTime)
+                if duration >= self.requiredMotionSeconds {
+                    self.stopMotionTimer()
+                    self.switchToContinuousUpdates()
+                    Self.logger.info("🏃‍♂️ Motion (\(motionType)) sustained for \(Int(duration))s, starting updates")
+                }
             }
         }
+        
+        Self.logger.info("⏳ Motion detected (\(motionType)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
+    }
+    
+    private func stopMotionTimer() {
+        motionStartTime = nil
+        motionCheckTimer?.invalidate()
+        motionCheckTimer = nil
     }
     
     func requestPermissions() {
@@ -286,29 +297,17 @@ class LocationManager: NSObject, ObservableObject {
     
     private func switchToContinuousUpdates() {
         locationManager.stopMonitoringSignificantLocationChanges()
-        significantLocationTimer?.invalidate()
-        significantLocationTimer = nil
-        
         locationManager.startUpdatingLocation()
         isTracking = true
         startTimeForEstimate = Date()
+        // Self.logger.info("🎯 Switched to continuous updates")
     }
     
     private func switchToSignificantLocationChanges() {
         locationManager.stopUpdatingLocation()
-        
-        // Start monitoring significant location changes
         locationManager.startMonitoringSignificantLocationChanges()
-        isTracking = false  // Changed to false for significant changes mode
-        
-        // Set up a timer to periodically restart significant location monitoring
-        significantLocationTimer?.invalidate()
-        significantLocationTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            // Restart significant location monitoring every 5 minutes
-            self.locationManager.stopMonitoringSignificantLocationChanges()
-            self.locationManager.startMonitoringSignificantLocationChanges()
-        }
+        isTracking = false
+        // Self.logger.info("📍 Switched to significant changes mode")
     }
     
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -366,3 +365,4 @@ extension LocationManager: CLLocationManagerDelegate {
         Self.logger.error("❌ Location manager error: \(String(describing: error))")
     }
 } 
+
