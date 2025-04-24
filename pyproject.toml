@@ -1,0 +1,26 @@
+[tool.black]
+line-length = 110
+target-version = ['py312']
+include = '\.py'
+
+[tool.poetry]
+name = "Trace"
+version = "0.1.0"
+description = ""
+authors = ["momonala <mnalavadi@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "3.12.*"
+pandas = "2.*"
+joblib = "1.*"
+pydeck = "0.*"
+geopy = "2.*"
+tqdm = "4.*"
+numpy = "2.*"
+geopandas = "1.*"
+requests = "2.*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
