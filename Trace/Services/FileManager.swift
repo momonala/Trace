@@ -226,8 +226,8 @@ class FileManager: ObservableObject {
             if filesToUpload.isEmpty {
                 uploadError = NSError(
                     domain: "com.trace",
-                    code: 404,
-                    userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 404"]
+                    code: 0,
+                    userInfo: [NSLocalizedDescriptionKey: "No files ready for upload."]
                 )
                 Self.logger.info("ℹ️ No files to upload")
                 return

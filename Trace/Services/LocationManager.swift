@@ -24,13 +24,14 @@ class LocationManager: NSObject, ObservableObject {
     @Published var mapRefreshError: Error?
     @Published var pointsLast24h: Int = 0
     @Published var pointsLabel = "Points 0d"
-    @Published var mapCoordinates: [(timestamp: String, latitude: Double, longitude: Double)] = []
+    @Published var mapCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)] = []
     
     // Persisted settings
     @Published private(set) var minimumAccuracy: Double
     @Published private(set) var lookbackDays: Double
     @Published private(set) var minimumPointsPerSegment: Double
     @Published private(set) var requiredMotionSeconds: Double
+    @Published private(set) var maxDistance: Int
     
     private var startTimeForEstimate: Date?
     private var motionStartTime: Date?
@@ -51,6 +52,9 @@ class LocationManager: NSObject, ObservableObject {
         
         let savedMotionSeconds = UserDefaults.standard.double(forKey: "requiredMotionSeconds")
         requiredMotionSeconds = savedMotionSeconds != 0 ? savedMotionSeconds : 3.0
+        
+        let savedMaxDistance = UserDefaults.standard.integer(forKey: "maxDistance")
+        maxDistance = savedMaxDistance != 0 ? savedMaxDistance : 100
         
         super.init()
         
@@ -119,6 +123,15 @@ class LocationManager: NSObject, ObservableObject {
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
+        
+        // Create a publisher for maxDistance
+        $maxDistance
+            .dropFirst()
+            .sink { [weak self] newValue in
+                UserDefaults.standard.set(newValue, forKey: "maxDistance")
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
     
     // Add setters for the persisted properties
@@ -138,12 +151,27 @@ class LocationManager: NSObject, ObservableObject {
         requiredMotionSeconds = value
     }
     
+    func setMaxDistance(_ value: Int) {
+        maxDistance = value
+    }
+    
     func refreshMapData() async {
         mapRefreshError = nil
         
-        // Convert days to hours for API request
-        let lookbackHours = Int(lookbackDays * 24)
-        pointsLabel = "Points \(Int(lookbackDays))d"
+        // Calculate lookback hours
+        let lookbackHours: Int
+        if lookbackDays == 0 {
+            // Calculate hours since midnight of current day
+            let calendar = Calendar.current
+            let now = Date()
+            let midnight = calendar.startOfDay(for: now)
+            let hoursSinceMidnight = Int(ceil(now.timeIntervalSince(midnight) / 3600))
+            lookbackHours = hoursSinceMidnight
+            pointsLabel = "Points Today"
+        } else {
+            lookbackHours = Int(lookbackDays * 24)
+            pointsLabel = "Points \(Int(lookbackDays))d"
+        }
         
         guard let url = URL(string: "\(FileManager.shared.serverBaseURL)/coordinates") else {
             let error = NSError(domain: "com.trace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
@@ -197,14 +225,15 @@ class LocationManager: NSObject, ObservableObject {
             
             if status == "success" {
                 pointsLast24h = count
-                mapCoordinates = coordinates.compactMap { coord -> (timestamp: String, latitude: Double, longitude: Double)? in
-                    guard coord.count >= 3,
+                mapCoordinates = coordinates.compactMap { coord -> (timestamp: String, latitude: Double, longitude: Double, accuracy: Double)? in
+                    guard coord.count >= 4,
                           let timestamp = coord[0] as? String,
                           let lat = coord[1] as? Double,
-                          let lon = coord[2] as? Double else {
+                          let lon = coord[2] as? Double,
+                          let accuracy = coord[3] as? Double else {
                         return nil
                     }
-                    return (timestamp: timestamp, latitude: lat, longitude: lon)
+                    return (timestamp: timestamp, latitude: lat, longitude: lon, accuracy: accuracy)
                 }
                 Self.logger.info("📍 Loaded \(count) points from API (lookback: \(lookbackHours)h)")
             } else {
@@ -248,14 +277,14 @@ class LocationManager: NSObject, ObservableObject {
             if requiredMotionSeconds == 0 {
                 // Start tracking immediately
                 switchToContinuousUpdates()
-                Self.logger.info("🏃‍♂️ Motion detected (\(motionType)), starting updates immediately")
+                // Self.logger.info("🏃‍♂️ Motion detected (\(motionType)), starting updates immediately")
             } else {
                 startMotionTimer(motionType)
             }
         } else {
             stopMotionTimer()
             switchToSignificantLocationChanges()
-            Self.logger.info("🛑 Motion stopped (\(motionType)), switching to significant changes")
+            // Self.logger.info("🛑 Motion stopped (\(motionType)), switching to significant changes")
         }
     }
     
@@ -282,7 +311,7 @@ class LocationManager: NSObject, ObservableObject {
             }
         }
         
-        Self.logger.info("⏳ Motion detected (\(motionType)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
+        // Self.logger.info("⏳ Motion detected (\(motionType)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
     }
     
     private func stopMotionTimer() {
