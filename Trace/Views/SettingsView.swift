@@ -10,7 +10,7 @@ struct SettingsView: View {
     @Binding var displayedCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)]
     
     private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
-    private let accuracyOptions = [5.0, 10.0, 20.0, 50.0, 80.0, 100.0, 150.0, 200.0]
+    private let accuracyOptions = [5.0, 10.0, 20.0, 50.0, 80.0, 100.0, 150.0, 200.0, 250.0, 350.0, 500.0, 1000.0]
     private let lookbackOptions = [0.0, 1.0, 2.0, 3.0, 7.0, 14.0, 30.0, 60.0, 90.0, 180.0, 365.0]
     private let pathLengthOptions = [5.0, 10.0, 20.0, 40.0, 50.0, 100.0]
     private let motionDurationOptions = [0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0]
@@ -72,14 +72,17 @@ struct SettingsView: View {
                         set: { locationManager.setLookbackDays($0) }
                     )) {
                         ForEach(lookbackOptions, id: \.self) { days in
+                            let date = Calendar.current.date(byAdding: .day, value: -Int(days), to: currentTime)!
+                            let dateStr = date.formatted(.dateTime.day().month(.abbreviated))
+                            
                             if days == 0 {
                                 Text("Today")
                                     .tag(days)
                             } else if days == 1 {
-                                Text("1 day")
+                                Text("1 day (\(dateStr))")
                                     .tag(days)
                             } else {
-                                Text("\(Int(days)) days")
+                                Text("\(Int(days)) days (\(dateStr))")
                                     .tag(days)
                             }
                         }
