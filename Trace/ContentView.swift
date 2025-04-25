@@ -62,28 +62,6 @@ struct MapView: UIViewRepresentable {
             // Remove existing overlays
             view.removeOverlays(view.overlays)
             
-            // Filter points by accuracy first
-            let accuracyFilteredCoords = coordinates.filter { $0.accuracy <= minimumAccuracy }
-            
-            // Calculate distances and filter by maximum distance
-            var filteredCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)] = []
-            var lastValidPoint: CLLocation?
-            
-            for coord in accuracyFilteredCoords {
-                let currentPoint = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
-                
-                if let lastPoint = lastValidPoint {
-                    let distance = lastPoint.distance(from: currentPoint)
-                    if distance <= Double(maxDistance) {
-                        filteredCoordinates.append(coord)
-                    }
-                } else {
-                    // Always include the first point
-                    filteredCoordinates.append(coord)
-                }
-                lastValidPoint = currentPoint
-            }
-            
             // Create segments based on time gaps
             var currentSegment: [CLLocationCoordinate2D] = []
             var segments: [[CLLocationCoordinate2D]] = []
@@ -91,13 +69,13 @@ struct MapView: UIViewRepresentable {
             let dateFormatter = ISO8601DateFormatter()
             dateFormatter.formatOptions = [.withInternetDateTime]
             
-            for i in 0..<filteredCoordinates.count {
-                let coord = CLLocationCoordinate2D(latitude: filteredCoordinates[i].latitude, longitude: filteredCoordinates[i].longitude)
+            for i in 0..<coordinates.count {
+                let coord = CLLocationCoordinate2D(latitude: coordinates[i].latitude, longitude: coordinates[i].longitude)
                 
                 if i > 0 {
                     // Check time difference with previous point
-                    if let prevTime = dateFormatter.date(from: filteredCoordinates[i-1].timestamp),
-                       let currTime = dateFormatter.date(from: filteredCoordinates[i].timestamp) {
+                    if let prevTime = dateFormatter.date(from: coordinates[i-1].timestamp),
+                       let currTime = dateFormatter.date(from: coordinates[i].timestamp) {
                         let timeDiff = currTime.timeIntervalSince(prevTime)
                         
                         if timeDiff > 5 { // More than 5 seconds gap, create a new segment
@@ -129,7 +107,7 @@ struct MapView: UIViewRepresentable {
                 }
             }
             
-            Self.logger.info("📍 Plotting \(totalPoints) points in \(validSegmentsCount) segments (filtered by accuracy ≤ \(Int(minimumAccuracy))m, distance ≤ \(maxDistance)m, and segments < \(minimumPointsPerSegment) points)")
+            Self.logger.info("📍 Plotting \(totalPoints) points in \(validSegmentsCount) segments (min points per segment: \(minimumPointsPerSegment))")
             
             // Notify that plotting is complete after a short delay to allow rendering
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

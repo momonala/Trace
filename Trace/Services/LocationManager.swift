@@ -181,9 +181,11 @@ class LocationManager: NSObject, ObservableObject {
         }
         
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        // Add lookback hours as query parameter
+        // Add query parameters
         urlComponents?.queryItems = [
-            URLQueryItem(name: "lookback_hours", value: String(lookbackHours))
+            URLQueryItem(name: "lookback_hours", value: String(lookbackHours)),
+            URLQueryItem(name: "min_accuracy", value: String(Int(minimumAccuracy))),
+            URLQueryItem(name: "max_distance", value: String(maxDistance))
         ]
         
         guard let finalURL = urlComponents?.url else {
@@ -235,7 +237,7 @@ class LocationManager: NSObject, ObservableObject {
                     }
                     return (timestamp: timestamp, latitude: lat, longitude: lon, accuracy: accuracy)
                 }
-                Self.logger.info("📍 Loaded \(count) points from API (lookback: \(lookbackHours)h)")
+                Self.logger.info("📍 Loaded \(count) points from API (lookback: \(lookbackHours)h, accuracy: ≤\(Int(self.minimumAccuracy))m, distance: ≤\(self.maxDistance)m)")
             } else {
                 let error = NSError(domain: "com.trace", code: 6, userInfo: [NSLocalizedDescriptionKey: "Server returned error status"])
                 Self.logger.error("❌ \(error.localizedDescription)")
