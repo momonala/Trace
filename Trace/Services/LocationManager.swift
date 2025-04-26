@@ -11,7 +11,7 @@ class LocationManager: NSObject, ObservableObject {
     
     private let locationManager = CLLocationManager()
     private let motionManager = CMMotionActivityManager()
-    private let fileManager = FileManager.shared
+    private let fileManager = ServerAPIManager.shared
     private let audioManager = AudioManager.shared
     
     // Non-persisted published properties
@@ -172,7 +172,7 @@ class LocationManager: NSObject, ObservableObject {
             pointsLabel = "Points \(Int(lookbackDays))d"
         }
         
-        guard let url = URL(string: "\(FileManager.shared.serverBaseURL)/coordinates") else {
+        guard let url = URL(string: "\(ServerAPIManager.shared.serverBaseURL)/coordinates") else {
             let error = NSError(domain: "com.trace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
             Self.logger.error("❌ \(error.localizedDescription)")
             mapRefreshError = error

@@ -78,7 +78,7 @@ graph TD
 
 ## Key Files
 - `LocationManager`: Handles motion detection and location updates
-- `FileManager`: Manages data storage and upload
+- `ServerAPIManager`: Manages data storage and upload
 - `AudioManager`: Maintains background operation
 - `ContentView`: Main UI with map and stats
 - `SettingsView`: Configuration interface

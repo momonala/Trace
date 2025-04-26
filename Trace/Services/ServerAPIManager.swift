@@ -30,9 +30,9 @@ struct LocationsPayload: Encodable {
 }
 
 @MainActor
-class FileManager: ObservableObject {
-    static let shared = FileManager()
-    private static let logger = LoggerUtil(category: "fileManager")
+class ServerAPIManager: ObservableObject {
+    static let shared = ServerAPIManager()
+    private static let logger = LoggerUtil(category: "serverAPIManager")
 
     
     // MARK: - API Configuration

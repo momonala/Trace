@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @StateObject private var fileManager = FileManager.shared
+    @StateObject private var fileManager = ServerAPIManager.shared
     @StateObject private var locationManager = LocationManager.shared
     @State private var showingAlert = false
     @State private var alertMessage = ""
@@ -151,7 +151,7 @@ struct SettingsView: View {
         
         Task {
             do {
-                let (data, response) = try await URLSession.shared.data(from: FileManager.shared.statusURL)
+                let (data, response) = try await URLSession.shared.data(from: ServerAPIManager.shared.statusURL)
                 
                 isTestingAPI = false
                 

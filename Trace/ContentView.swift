@@ -255,7 +255,7 @@ struct ContentView: View {
     private var settingsView: some View {
         Form {
             Section(header: Text("Server Status")) {
-                if let lastUpload = FileManager.shared.lastUploadAttempt {
+                if let lastUpload = ServerAPIManager.shared.lastUploadAttempt {
                     HStack {
                         Text("Last Sent")
                         Spacer()
@@ -283,7 +283,7 @@ struct ContentView: View {
 
 struct StatsPanel: View {
     @StateObject private var locationManager = LocationManager.shared
-    @StateObject private var fileManager = FileManager.shared
+    @StateObject private var fileManager = ServerAPIManager.shared
     @State private var currentTime = Date()
     @State private var showUploadError = false
     @State private var showRefreshError = false
