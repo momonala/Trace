@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import UIKit
 import os.log
 
 /// Manages silent audio playback to keep app alive in background
@@ -9,11 +10,17 @@ class AudioManager {
     
     private var audioEngine: AVAudioEngine?
     private var silentPlayer: AVAudioPlayerNode?
-    private var timer: Timer?
+    private var cycleTimer: Timer?
+    private var isInBackground = false
+    
+    // Audio cycle configuration
+    private let playDuration: TimeInterval = 0.5  // Duration to play audio
+    private let cycleDuration: TimeInterval = 20.0  // Total cycle duration
     
     private init() {
         setupAudioSession()
         setupAudioEngine()
+        setupNotificationObservers()
     }
     
     private func setupAudioSession() {
@@ -58,41 +65,88 @@ class AudioManager {
         Self.logger.info("✅ Audio engine setup complete")
     }
     
+    private func setupNotificationObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func handleAppDidEnterBackground() {
+        Self.logger.info("🌚 App entered background mode")
+        isInBackground = true
+        startPlayingInBackground()
+    }
+    
+    @objc private func handleAppWillEnterForeground() {
+        Self.logger.info("🌞 App entering foreground mode")
+        isInBackground = false
+        stopPlayingInBackground()
+    }
+    
     func startPlayingInBackground() {
+        guard isInBackground else {
+            Self.logger.info("🎵 Not starting audio - app is in foreground")
+            return
+        }
+        
+        Self.logger.info("🎵 Starting background audio cycle (play: \(self.playDuration)s, cycle: \(self.cycleDuration)s)")
+        startAudioCycle()
+    }
+    
+    private func startAudioCycle() {
+        // Start the first cycle
+        startAudio()
+        
+        // Setup the cycle timer
+        cycleTimer?.invalidate()
+        cycleTimer = Timer.scheduledTimer(withTimeInterval: cycleDuration, repeats: true) { [weak self] _ in
+            self?.startAudio()
+        }
+    }
+    
+    private func startAudio() {
         guard let audioEngine = audioEngine,
               let silentPlayer = silentPlayer else { return }
         
         do {
             try audioEngine.start()
             silentPlayer.play()
+//            Self.logger.info("🔊 Started audio for \(self.playDuration)s")
             
-            // Periodically check and restart if needed
-            timer?.invalidate()
-            timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-                if audioEngine.isRunning {
-                    Self.logger.info("🔊 Silent audio still playing")
-                } else {
-                    Self.logger.warning("🔇 Silent audio stopped, restarting...")
-                    self?.restartAudioEngine()
-                }
+            // Schedule stop after playDuration
+            DispatchQueue.main.asyncAfter(deadline: .now() + playDuration) { [weak self] in
+                self?.stopAudio()
             }
-            Self.logger.info("✅ Started background audio")
         } catch {
             Self.logger.error("❌ Failed to start audio engine: \(error.localizedDescription)")
         }
     }
     
-    private func restartAudioEngine() {
-        setupAudioSession()
-        setupAudioEngine()
-        startPlayingInBackground()
+    private func stopAudio() {
+        silentPlayer?.stop()
+        audioEngine?.stop()
+//        Self.logger.info("🔇 Stopped audio, waiting \(self.cycleDuration - self.playDuration)s")
     }
     
     func stopPlayingInBackground() {
-        timer?.invalidate()
-        timer = nil
-        silentPlayer?.stop()
-        audioEngine?.stop()
-        Self.logger.info("🛑 Stopped background audio")
+        cycleTimer?.invalidate()
+        cycleTimer = nil
+        stopAudio()
+        Self.logger.info("🛑 Stopped background audio cycle")
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        stopPlayingInBackground()
     }
 } 
