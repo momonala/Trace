@@ -35,14 +35,18 @@ class ServerAPIManager: ObservableObject {
     private static let logger = LoggerUtil(category: "serverAPIManager")
 
     
-    // MARK: - API Configuration
-    private static let baseURL = "https://full-primarily-weevil.ngrok-free.app/incognita"
+    // API Configuration
+    // private static let baseURL = "https://full-primarily-weevil.ngrok-free.app/incognita"
+    // private static let baseURL = "http://192.168.0.183:5003"
+    private static let baseURL = "https://trace.mnalavadi.org/"
+
     var serverBaseURL: String { Self.baseURL }
     private var apiEndpoint: String { "\(Self.baseURL)/dump" }
     private var statusEndpoint: String { "\(Self.baseURL)/status" }
+    private var heartbeatEndpoint: String { "\(Self.baseURL)/heartbeat" }
     var statusURL: URL { URL(string: statusEndpoint)! }
+    private let heartbeatIntervalSeconds: TimeInterval = 30.0
     
-    // MARK: - Published Properties
     @Published var currentHourlyFile: HourlyFile?
     @Published var queuedFiles: Int = 0
     @Published var bufferSize: Int = 0
@@ -71,6 +75,7 @@ class ServerAPIManager: ObservableObject {
     
     private let calendar = Calendar.current
     private var midnightUploadTimer: Timer?
+    private var heartbeatTimer: Timer?
     
     private init() {
         // Initialize from UserDefaults
@@ -85,7 +90,10 @@ class ServerAPIManager: ObservableObject {
                 setupMidnightUpload()
             }
         }
+        
+        startHeartbeat()
     }
+    
     
     private func setupMidnightUpload() {
         // Cancel any existing timer
@@ -118,6 +126,48 @@ class ServerAPIManager: ObservableObject {
                 // Setup next day's timer
                 self.setupMidnightUpload()
             }
+        }
+    }
+    
+    private func startHeartbeat() {
+        Self.logger.info("💓 Starting heartbeat timer")
+        // Send initial heartbeat
+        Task {
+            await sendHeartbeat()
+        }
+        
+        // Setup timer for subsequent heartbeats
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: heartbeatIntervalSeconds, repeats: true) { [weak self] _ in
+            Task {
+                await self?.sendHeartbeat()
+            }
+        }
+    }
+    
+    private func sendHeartbeat() async {
+        guard let url = URL(string: heartbeatEndpoint) else {
+            Self.logger.error("Invalid heartbeat URL")
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                Self.logger.error("Invalid heartbeat response")
+                return
+            }
+            
+            if (200...299).contains(httpResponse.statusCode) {
+                Self.logger.info("💓 Heartbeat sent successfully")
+            } else {
+                Self.logger.warning("⚠️ Heartbeat failed with status: \(httpResponse.statusCode)")
+            }
+        } catch {
+            Self.logger.error("❌ Heartbeat error: \(error.localizedDescription)")
         }
     }
     

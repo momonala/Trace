@@ -494,8 +494,7 @@ struct ErrorMessage: View {
         .cornerRadius(6)
         .transition(.opacity)
         .onAppear {
-            // Auto-dismiss after 5 seconds with animation
-            withAnimation(.easeOut(duration: 0.3).delay(5)) {
+            withAnimation(.easeOut(duration: 0.3).delay(3)) {
                 onDismiss()
             }
         }

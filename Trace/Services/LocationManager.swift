@@ -32,9 +32,15 @@ class LocationManager: NSObject, ObservableObject {
     @Published private(set) var requiredMotionSeconds: Double
     @Published private(set) var maxDistance: Int
     
+    // Timer state
     private var startTimeForEstimate: Date?
     private var motionStartTime: Date?
     private var motionCheckTimer: Timer?
+    private enum TimerTargetState {
+        case motion
+        case stationary
+    }
+    private var targetState: TimerTargetState?
     
     private var cancellables = Set<AnyCancellable>()
     
@@ -249,14 +255,14 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     private func setupMotionManager() {
-        motionManager.startActivityUpdates(to: .main) { [weak self] activity in
-            guard let self = self else { return }
-            if let activity = activity {
+            motionManager.startActivityUpdates(to: .main) { [weak self] activity in
+                guard let self = self else { return }
+                if let activity = activity {
                 // Determine motion type
                 let newMotionType = activity.cycling ? "cycling" :
                     activity.automotive ? "automotive" :
-                    activity.walking ? "walking" :
-                    activity.running ? "running" :
+                        activity.walking ? "walking" :
+                        activity.running ? "running" :
                     activity.stationary ? "stationary" :
                     activity.unknown ? "unknown" : "unknown"
                 
@@ -276,29 +282,36 @@ class LocationManager: NSObject, ObservableObject {
         
         if shouldTrack {
             if requiredMotionSeconds == 0 {
-                // Start tracking immediately
+        // Start tracking immediately
                 switchToContinuousUpdates()
-                // Self.logger.info("🏃‍♂️ Motion detected (\(motionType)), starting updates immediately")
+                Self.logger.info("🏃‍♂️ Motion detected (\(motionType)), starting updates immediately")
             } else {
-                startMotionTimer(motionType)
+                startStateTimer(targetState: .motion, currentState: motionType)
             }
         } else {
-            stopMotionTimer()
-            switchToSignificantLocationChanges()
-            // Self.logger.info("🛑 Motion stopped (\(motionType)), switching to significant changes")
+            if requiredMotionSeconds == 0 {
+                // Stop tracking immediately
+                stopMotionTimer()
+                switchToSignificantLocationChanges()
+                Self.logger.info("🛑 Motion stopped (\(motionType)), switching to significant changes")
+            } else {
+                startStateTimer(targetState: .stationary, currentState: motionType)
+            }
         }
     }
     
-    private func startMotionTimer(_ motionType: String) {
+    private func startStateTimer(targetState: TimerTargetState, currentState: String) {
         // Clean up existing timer if any
         stopMotionTimer()
         
         // Start new timing session
+        self.targetState = targetState
         motionStartTime = Date()
         motionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             Task { @MainActor in
                 guard let self = self,
-                      let startTime = self.motionStartTime else { 
+                      let startTime = self.motionStartTime,
+                      let targetState = self.targetState else { 
                     timer.invalidate()
                     return 
                 }
@@ -306,17 +319,30 @@ class LocationManager: NSObject, ObservableObject {
                 let duration = Date().timeIntervalSince(startTime)
                 if duration >= self.requiredMotionSeconds {
                     self.stopMotionTimer()
-                    self.switchToContinuousUpdates()
-                    Self.logger.info("🏃‍♂️ Motion (\(motionType)) sustained for \(Int(duration))s, starting updates")
+                    
+                    switch targetState {
+                    case .motion:
+                        self.switchToContinuousUpdates()
+                        Self.logger.info("🏃‍♂️ Motion (\(currentState)) sustained for \(Int(duration))s, starting updates")
+                    case .stationary:
+                        self.switchToSignificantLocationChanges()
+                        Self.logger.info("🛑 Stationary sustained for \(Int(duration))s, switching to significant changes")
+                    }
                 }
             }
         }
         
-        // Self.logger.info("⏳ Motion detected (\(motionType)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
+        switch targetState {
+        case .motion:
+            Self.logger.info("⏳ Motion detected (\(currentState)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
+        case .stationary:
+            Self.logger.info("⏳ Stationary detected, waiting \(Int(self.requiredMotionSeconds))s before stopping")
+        }
     }
     
     private func stopMotionTimer() {
         motionStartTime = nil
+        targetState = nil
         motionCheckTimer?.invalidate()
         motionCheckTimer = nil
     }
@@ -363,25 +389,25 @@ extension LocationManager: CLLocationManagerDelegate {
         Task {
             // Get or create file for this location's timestamp
             let file = await fileManager.getFileForDate(location.timestamp)
-            
-            // Save location to Core Data
-            let context = PersistenceController.shared.container.viewContext
-            let locationPoint = LocationPoint(context: context)
-            
-            locationPoint.timestamp = location.timestamp
-            locationPoint.latitude = location.coordinate.latitude
-            locationPoint.longitude = location.coordinate.longitude
-            locationPoint.altitude = location.altitude
-            locationPoint.speed = location.speed
-            locationPoint.horizontalAccuracy = location.horizontalAccuracy
-            locationPoint.verticalAccuracy = location.verticalAccuracy
-            locationPoint.motionType = currentMotionType
-            
+        
+        // Save location to Core Data
+        let context = PersistenceController.shared.container.viewContext
+        let locationPoint = LocationPoint(context: context)
+        
+        locationPoint.timestamp = location.timestamp
+        locationPoint.latitude = location.coordinate.latitude
+        locationPoint.longitude = location.coordinate.longitude
+        locationPoint.altitude = location.altitude
+        locationPoint.speed = location.speed
+        locationPoint.horizontalAccuracy = location.horizontalAccuracy
+        locationPoint.verticalAccuracy = location.verticalAccuracy
+        locationPoint.motionType = currentMotionType
+        
             // Associate with the file for this timestamp
             locationPoint.hourlyFile = file
-            
-            do {
-                try context.save()
+        
+        do {
+            try context.save()
                 await fileManager.pointAdded()
                 // Self.logger.info("📍 Saved point with accuracy: \(String(format: "%.0fm", location.horizontalAccuracy))")
             } catch {
