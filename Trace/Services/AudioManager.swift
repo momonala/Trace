@@ -2,19 +2,15 @@ import Foundation
 import AVFoundation
 import UIKit
 
-/// Manages silent audio playback to keep app alive in background
+/// Manages audio playback to keep app alive in background
 class AudioManager {
     static let shared = AudioManager()
     private static let logger = LoggerUtil(category: "audioManager")
     
     private var audioPlayer: AVAudioPlayer?
-    private var cycleTimer: Timer?
     private var isInBackground = false
-    
-    // Audio cycle configuration
-    private let playDuration: TimeInterval = 0.5  // Duration to play audio
-    private let cycleDuration: TimeInterval = 20.0  // Total cycle duration
-    
+    private let volume: Float = 0.0
+
     private init() {
         setupAudioSession()
         setupAudioPlayer()
@@ -99,7 +95,7 @@ class AudioManager {
         do {
             audioPlayer = try AVAudioPlayer(contentsOf: tempURL)
             audioPlayer?.numberOfLoops = -1  // Loop indefinitely
-            audioPlayer?.volume = 0.7
+            audioPlayer?.volume = volume
             Self.logger.info("✅ Audio player setup complete")
         } catch {
             Self.logger.error("Failed to create audio player: \(error.localizedDescription)")
@@ -125,15 +121,6 @@ class AudioManager {
     @objc private func handleAppDidEnterBackground() {
         Self.logger.info("🌚 App entered background mode")
         isInBackground = true
-        
-        // Ensure audio session is active
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-            Self.logger.info("✅ Reactivated audio session in background")
-        } catch {
-            Self.logger.error("❌ Failed to reactivate audio session: \(error.localizedDescription)")
-        }
-        
         startPlayingInBackground()
     }
     
@@ -144,41 +131,18 @@ class AudioManager {
     }
     
     func startPlayingInBackground() {
-        Self.logger.info("🎵 Starting background audio cycle (play: \(playDuration)s, cycle: \(cycleDuration)s)")
-        startAudioCycle()
-    }
-    
-    private func startAudioCycle() {
-        // Start the first cycle
-        startAudio()
-        
-        // Setup the cycle timer
-        cycleTimer?.invalidate()
-        cycleTimer = Timer.scheduledTimer(withTimeInterval: cycleDuration, repeats: true) { [weak self] _ in
-            self?.startAudio()
+        guard isInBackground else {
+            Self.logger.info("Not starting audio - app is in foreground")
+            return
         }
-    }
-    
-    private func startAudio() {
+        
         audioPlayer?.play()
-        Self.logger.info("🔊 Started audio for \(playDuration)s")
-        
-        // Schedule stop
-        DispatchQueue.main.asyncAfter(deadline: .now() + playDuration) { [weak self] in
-            self?.stopAudio()
-        }
-    }
-    
-    private func stopAudio() {
-        audioPlayer?.stop()
-        Self.logger.info("🔇 Stopped audio, waiting \(cycleDuration - playDuration)s")
+        Self.logger.info("🎵 Started continuous background audio")
     }
     
     func stopPlayingInBackground() {
-        cycleTimer?.invalidate()
-        cycleTimer = nil
-        stopAudio()
-        Self.logger.info("🛑 Stopped background audio cycle")
+        audioPlayer?.stop()
+        Self.logger.info("🛑 Stopped background audio")
     }
     
     deinit {
