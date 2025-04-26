@@ -1,6 +1,5 @@
 import Foundation
 import CoreData
-import os.log
 
 struct LocationFeature: Encodable {
     struct Geometry: Encodable {
@@ -33,7 +32,8 @@ struct LocationsPayload: Encodable {
 @MainActor
 class FileManager: ObservableObject {
     static let shared = FileManager()
-    private static let logger = Logger(subsystem: "com.trace", category: "file-manager")
+    private static let logger = LoggerUtil(category: "fileManager")
+
     
     // MARK: - API Configuration
     private static let baseURL = "https://full-primarily-weevil.ngrok-free.app/incognita"

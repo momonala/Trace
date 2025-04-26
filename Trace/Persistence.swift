@@ -6,11 +6,10 @@
 //
 
 import CoreData
-import os.log
 
 struct PersistenceController {
     static let shared = PersistenceController()
-    private static let logger = Logger(subsystem: "com.trace", category: "persistence")
+    private static let logger = LoggerUtil(category: "persistenceController")
 
     @MainActor
     static let preview: PersistenceController = {

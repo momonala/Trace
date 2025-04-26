@@ -1,14 +1,13 @@
 import CoreLocation
 import CoreMotion
 import SwiftUI
-import os.log
 import CoreData
 import Combine
 
 @MainActor
 class LocationManager: NSObject, ObservableObject {
     static let shared = LocationManager()
-    private static let logger = Logger(subsystem: "com.trace", category: "locationManager")
+    private static let logger = LoggerUtil(category: "locationManager")
     
     private let locationManager = CLLocationManager()
     private let motionManager = CMMotionActivityManager()

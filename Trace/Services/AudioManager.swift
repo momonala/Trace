@@ -1,12 +1,11 @@
 import Foundation
 import AVFoundation
 import UIKit
-import os.log
 
 /// Manages silent audio playback to keep app alive in background
 class AudioManager {
     static let shared = AudioManager()
-    private static let logger = Logger(subsystem: "com.trace", category: "audioManager")
+    private static let logger = LoggerUtil(category: "audioManager")
     
     private var audioEngine: AVAudioEngine?
     private var silentPlayer: AVAudioPlayerNode?
@@ -29,7 +28,7 @@ class AudioManager {
             try AVAudioSession.sharedInstance().setActive(true)
             Self.logger.info("✅ Audio session setup complete")
         } catch {
-            Self.logger.error("❌ Failed to set up audio session: \(error.localizedDescription)")
+            Self.logger.error("Failed to set up audio session: \(error.localizedDescription)")
         }
     }
     
@@ -94,12 +93,7 @@ class AudioManager {
     }
     
     func startPlayingInBackground() {
-        guard isInBackground else {
-            Self.logger.info("🎵 Not starting audio - app is in foreground")
-            return
-        }
-        
-        Self.logger.info("🎵 Starting background audio cycle (play: \(self.playDuration)s, cycle: \(self.cycleDuration)s)")
+        Self.logger.info("🎵 Starting background audio cycle (play: \(playDuration)s, cycle: \(cycleDuration)s)")
         startAudioCycle()
     }
     
@@ -121,21 +115,21 @@ class AudioManager {
         do {
             try audioEngine.start()
             silentPlayer.play()
-//            Self.logger.info("🔊 Started audio for \(self.playDuration)s")
+             Self.logger.info("🔊 Started audio for \(playDuration)s")
             
             // Schedule stop after playDuration
             DispatchQueue.main.asyncAfter(deadline: .now() + playDuration) { [weak self] in
                 self?.stopAudio()
             }
         } catch {
-            Self.logger.error("❌ Failed to start audio engine: \(error.localizedDescription)")
+            Self.logger.error("Failed to start audio engine: \(error.localizedDescription)")
         }
     }
     
     private func stopAudio() {
         silentPlayer?.stop()
         audioEngine?.stop()
-//        Self.logger.info("🔇 Stopped audio, waiting \(self.cycleDuration - self.playDuration)s")
+        // Self.logger.info("🔇 Stopped audio, waiting \(cycleDuration - playDuration)s")
     }
     
     func stopPlayingInBackground() {

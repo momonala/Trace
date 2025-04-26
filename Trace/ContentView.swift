@@ -8,11 +8,10 @@
 import SwiftUI
 import CoreData
 import MapKit
-import os.log
 
 // Custom Map View
 struct MapView: UIViewRepresentable {
-    private static let logger = Logger(subsystem: "com.trace", category: "mapView")
+    private static let logger = LoggerUtil(category: "mapView")
     
     let region: MKCoordinateRegion
     let coordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)]
