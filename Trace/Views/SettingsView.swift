@@ -111,7 +111,8 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Upload Settings")) {
-                    Toggle("Auto-Upload at Midnight", isOn: $fileManager.isAutoUploadEnabled)
+                    Toggle("Auto-Upload Files", isOn: $fileManager.isAutoUploadEnabled)
+                        .help("Automatically attempts to upload files every minute when new files are created")
                     
                     if let lastUpload = fileManager.lastUploadAttempt {
                         HStack {

@@ -63,10 +63,10 @@ class ServerAPIManager: ObservableObject {
     @Published var isAutoUploadEnabled: Bool {
         didSet {
             if isAutoUploadEnabled {
-                setupMidnightUpload()
+                startAutoUploadTimer()
             } else {
-                midnightUploadTimer?.invalidate()
-                midnightUploadTimer = nil
+                autoUploadTimer?.invalidate()
+                autoUploadTimer = nil
             }
             UserDefaults.standard.set(isAutoUploadEnabled, forKey: "isAutoUploadEnabled")
         }
@@ -74,7 +74,7 @@ class ServerAPIManager: ObservableObject {
     @Published var nextScheduledUpload: Date?
     
     private let calendar = Calendar.current
-    private var midnightUploadTimer: Timer?
+    private var autoUploadTimer: Timer?
     private var heartbeatTimer: Timer?
     
     private init() {
@@ -87,44 +87,35 @@ class ServerAPIManager: ObservableObject {
         Task { 
             await loadQueuedFilesCount()
             if isAutoUploadEnabled {
-                setupMidnightUpload()
+                startAutoUploadTimer()
             }
         }
         
         startHeartbeat()
     }
     
-    
-    private func setupMidnightUpload() {
+    private func startAutoUploadTimer() {
         // Cancel any existing timer
-        midnightUploadTimer?.invalidate()
+        autoUploadTimer?.invalidate()
         
-        // Calculate time until next midnight
-        let now = Date()
-        let calendar = Calendar.current
-        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
-              let nextMidnight = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: tomorrow) else {
-            Self.logger.error("❌ Failed to calculate next midnight")
-            return
-        }
-        
-        let timeUntilMidnight = nextMidnight.timeIntervalSince(now)
-        nextScheduledUpload = nextMidnight
-        Self.logger.info("🕛 Scheduled next auto-upload in \(String(format: "%.1f", timeUntilMidnight/3600)) hours")
-        
-        // Schedule timer for next midnight
-        midnightUploadTimer = Timer.scheduledTimer(withTimeInterval: timeUntilMidnight, repeats: false) { [weak self] _ in
+        // Schedule timer to run every minute
+        autoUploadTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { [weak self] in
                 guard let self = self else { return }
                 
-                // Perform upload
+                // Perform upload if there are files to upload
                 if self.queuedFiles > 0 {
-                    Self.logger.info("🌙 Starting scheduled midnight upload")
+                    Self.logger.info("🔄 Starting scheduled auto-upload")
                     await self.uploadAllFiles()
                 }
-                
-                // Setup next day's timer
-                self.setupMidnightUpload()
+            }
+        }
+        
+        // Trigger initial upload immediately
+        Task {
+            if queuedFiles > 0 {
+                Self.logger.info("🔄 Starting initial auto-upload")
+                await uploadAllFiles()
             }
         }
     }
