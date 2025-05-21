@@ -42,6 +42,15 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
+
+                    Button(action: {
+                        locationManager.restartLiveActivity()
+                        alertMessage = "Live Activity restarted!"
+                        showingAlert = true
+                    }) {
+                        Text("Restart Live Activity")
+                            .foregroundColor(.blue)
+                    }
                 }
                 
                 Section(header: Text("Map Settings")) {

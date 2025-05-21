@@ -6,14 +6,65 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		12CC329D2DDCB987007B670C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12CC326B2DDCB121007B670C /* WidgetKit.framework */; };
+		12CC329E2DDCB987007B670C /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 12CC326D2DDCB121007B670C /* SwiftUI.framework */; };
+		12CC32AB2DDCB989007B670C /* TraceWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 12CC329C2DDCB987007B670C /* TraceWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		12CC32A92DDCB989007B670C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 126BBA862DAFA85A00749295 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 12CC329B2DDCB987007B670C;
+			remoteInfo = TraceWidgetsExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		12CC32842DDCB122007B670C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				12CC32AB2DDCB989007B670C /* TraceWidgetsExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		126BBA8E2DAFA85A00749295 /* Trace.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Trace.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		12CC326B2DDCB121007B670C /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		12CC326D2DDCB121007B670C /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		12CC329C2DDCB987007B670C /* TraceWidgetsExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TraceWidgetsExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		12CC32AC2DDCB989007B670C /* Exceptions for "TraceWidgets" folder in "TraceWidgetsExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 12CC329B2DDCB987007B670C /* TraceWidgetsExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		126BBA902DAFA85A00749295 /* Trace */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Trace;
+			sourceTree = "<group>";
+		};
+		12CC329F2DDCB987007B670C /* TraceWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				12CC32AC2DDCB989007B670C /* Exceptions for "TraceWidgets" folder in "TraceWidgetsExtension" target */,
+			);
+			path = TraceWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -26,6 +77,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		12CC32992DDCB987007B670C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				12CC329E2DDCB987007B670C /* SwiftUI.framework in Frameworks */,
+				12CC329D2DDCB987007B670C /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -33,6 +93,8 @@
 			isa = PBXGroup;
 			children = (
 				126BBA902DAFA85A00749295 /* Trace */,
+				12CC329F2DDCB987007B670C /* TraceWidgets */,
+				12CC326A2DDCB121007B670C /* Frameworks */,
 				126BBA8F2DAFA85A00749295 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,8 +103,18 @@
 			isa = PBXGroup;
 			children = (
 				126BBA8E2DAFA85A00749295 /* Trace.app */,
+				12CC329C2DDCB987007B670C /* TraceWidgetsExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		12CC326A2DDCB121007B670C /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				12CC326B2DDCB121007B670C /* WidgetKit.framework */,
+				12CC326D2DDCB121007B670C /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -55,10 +127,12 @@
 				126BBA8A2DAFA85A00749295 /* Sources */,
 				126BBA8B2DAFA85A00749295 /* Frameworks */,
 				126BBA8C2DAFA85A00749295 /* Resources */,
+				12CC32842DDCB122007B670C /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				12CC32AA2DDCB989007B670C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				126BBA902DAFA85A00749295 /* Trace */,
@@ -69,6 +143,28 @@
 			productName = Trace;
 			productReference = 126BBA8E2DAFA85A00749295 /* Trace.app */;
 			productType = "com.apple.product-type.application";
+		};
+		12CC329B2DDCB987007B670C /* TraceWidgetsExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 12CC32AD2DDCB989007B670C /* Build configuration list for PBXNativeTarget "TraceWidgetsExtension" */;
+			buildPhases = (
+				12CC32982DDCB987007B670C /* Sources */,
+				12CC32992DDCB987007B670C /* Frameworks */,
+				12CC329A2DDCB987007B670C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				12CC329F2DDCB987007B670C /* TraceWidgets */,
+			);
+			name = TraceWidgetsExtension;
+			packageProductDependencies = (
+			);
+			productName = TraceWidgetsExtension;
+			productReference = 12CC329C2DDCB987007B670C /* TraceWidgetsExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -81,6 +177,9 @@
 				LastUpgradeCheck = 1620;
 				TargetAttributes = {
 					126BBA8D2DAFA85A00749295 = {
+						CreatedOnToolsVersion = 16.2;
+					};
+					12CC329B2DDCB987007B670C = {
 						CreatedOnToolsVersion = 16.2;
 					};
 				};
@@ -100,12 +199,20 @@
 			projectRoot = "";
 			targets = (
 				126BBA8D2DAFA85A00749295 /* Trace */,
+				12CC329B2DDCB987007B670C /* TraceWidgetsExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		126BBA8C2DAFA85A00749295 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		12CC329A2DDCB987007B670C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +229,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		12CC32982DDCB987007B670C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		12CC32AA2DDCB989007B670C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 12CC329B2DDCB987007B670C /* TraceWidgetsExtension */;
+			targetProxy = 12CC32A92DDCB989007B670C /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		126BBA9F2DAFA85D00749295 /* Debug */ = {
@@ -311,6 +433,60 @@
 			};
 			name = Release;
 		};
+		12CC32AE2DDCB989007B670C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 52K2BR328Z;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TraceWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TraceWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = mnalavadi.Trace.TraceWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		12CC32AF2DDCB989007B670C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 52K2BR328Z;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = TraceWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TraceWidgets;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = mnalavadi.Trace.TraceWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -328,6 +504,15 @@
 			buildConfigurations = (
 				126BBAA22DAFA85D00749295 /* Debug */,
 				126BBAA32DAFA85D00749295 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		12CC32AD2DDCB989007B670C /* Build configuration list for PBXNativeTarget "TraceWidgetsExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				12CC32AE2DDCB989007B670C /* Debug */,
+				12CC32AF2DDCB989007B670C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

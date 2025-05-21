@@ -22,6 +22,10 @@ iOS location tracking app optimized for battery life and privacy. Uses CoreMotio
     - Motion type
     - Metrics: speed, altitude, buffer size
 
+- 🔴 **Live Activity & Widget**
+    - Lock Screen and Dynamic Island widget shows current coordinates, speed, and update times
+    - Color-coded status and timestamps
+    - Minimal, battery-friendly design
 
 ## Data Flow
 ```mermaid
@@ -58,8 +62,10 @@ graph TD
 ## Settings
 - **Required Motion Duration**: Time in seconds of sustained motion before starting GPS tracking (0s for immediate).
 - **Minimum Accuracy**: Maximum allowed GPS accuracy radius in meters for storing points.
+- **Maximum Distance**: Maximum distance between points for path segments.
 - **History Lookback**: Number of days of data to display on the map.
 - **Minimum Path Length**: Minimum number of points required to display a path segment on the map.
+- **Auto-Upload**: Toggle for uploading data at midnight.
 
 ## Implementation Details
 - Uses CoreMotion for activity detection (walking, running, cycling, automotive)
@@ -67,6 +73,7 @@ graph TD
 - Silent audio playback to maintain background operation
 - CoreData for local storage
 - URLSession for API communication
+- **Live Activity/Widget**: Implemented in `TraceWidgetsLiveActivity.swift` and `TraceWidgetsAttributes.swift` (shows current location, speed, and update times)
 
 ## Development Requirements
 - iOS 18.0+
@@ -82,6 +89,8 @@ graph TD
 - `AudioManager`: Maintains background operation
 - `ContentView`: Main UI with map and stats
 - `SettingsView`: Configuration interface
+- `TraceWidgetsLiveActivity.swift`: Lock Screen/Dynamic Island widget for live tracking info
+- `TraceWidgetsAttributes.swift`: Widget data model
 
 ## Export Data Format
 Compatible with Overland's GeoJSON format:
@@ -94,15 +103,11 @@ Compatible with Overland's GeoJSON format:
     },
     "properties": {
         "speed": 5,
-        "battery_state": "unplugged",
         "motion": ["walking"],
         "timestamp": "2021-11-01T18:06:37Z",
-        "battery_level": 0.89,
-        "vertical_accuracy": 16,
+        "altitude": 39,
         "horizontal_accuracy": 35,
-        "wifi": "network-name",
-        "activity": "other",
-        "altitude": 39
+        "vertical_accuracy": 16
     }
 }
 ```

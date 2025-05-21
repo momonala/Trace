@@ -45,7 +45,7 @@ class ServerAPIManager: ObservableObject {
     private var statusEndpoint: String { "\(Self.baseURL)/status" }
     private var heartbeatEndpoint: String { "\(Self.baseURL)/heartbeat" }
     var statusURL: URL { URL(string: statusEndpoint)! }
-    private let heartbeatIntervalSeconds: TimeInterval = 30.0
+    private let heartbeatIntervalSeconds: TimeInterval = 3.0
     
     @Published var currentHourlyFile: HourlyFile?
     @Published var queuedFiles: Int = 0
@@ -163,6 +163,9 @@ class ServerAPIManager: ObservableObject {
             
             if (200...299).contains(httpResponse.statusCode) {
                 Self.logger.info("💓 Heartbeat sent successfully")
+                Task { @MainActor in
+                    LocationManager.shared.updateLastHeartbeatTimestamp(Date())
+                }
             } else {
                 Self.logger.warning("⚠️ Heartbeat failed with status: \(httpResponse.statusCode)")
             }

@@ -36,3 +36,4 @@ class LoggerUtil {
         logger.debug("\(self.timestamp()) 🔍 \(message)")
     }
 } 
+ 

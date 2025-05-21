@@ -3,6 +3,7 @@ import CoreMotion
 import SwiftUI
 import CoreData
 import Combine
+import ActivityKit
 
 @MainActor
 class LocationManager: NSObject, ObservableObject {
@@ -14,6 +15,9 @@ class LocationManager: NSObject, ObservableObject {
     private let fileManager = ServerAPIManager.shared
     private let audioManager = AudioManager.shared
     
+    // Live Activity
+    private var liveActivity: Activity<TraceWidgetsAttributes>?
+    
     // Non-persisted published properties
     @Published var currentLocation: CLLocation?
     @Published var isTracking = false
@@ -24,6 +28,7 @@ class LocationManager: NSObject, ObservableObject {
     @Published var pointsLast24h: Int = 0
     @Published var pointsLabel = "Points 0d"
     @Published var mapCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)] = []
+    @Published var lastHeartbeatTimestamp: Date? = nil
     
     // Persisted settings
     @Published private(set) var minimumAccuracy: Double
@@ -83,10 +88,14 @@ class LocationManager: NSObject, ObservableObject {
         // Start with significant location changes
         switchToSignificantLocationChanges()
         Self.logger.info("⏳ Started with significant location changes...")
+        
+        // Start Live Activity
+        startLiveActivity()
     }
     
     deinit {
         audioManager.stopPlayingInBackground()
+//        endLiveActivity()
     }
     
     private func setupPropertyObservers() {
@@ -372,11 +381,98 @@ class LocationManager: NSObject, ObservableObject {
             Self.logger.info("✅ Location access granted with background updates enabled")
         }
     }
+    
+    // MARK: - Live Activity Methods
+    
+    private func startLiveActivity() {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            Self.logger.info("❌ Live Activities are not enabled")
+            return
+        }
+        
+        let attributes = TraceWidgetsAttributes(name: "Trace")
+        let contentState = TraceWidgetsAttributes.ContentState(
+            latitude: currentLocation?.coordinate.latitude ?? 0,
+            longitude: currentLocation?.coordinate.longitude ?? 0,
+            altitude: currentLocation?.altitude ?? 0,
+            speed: currentLocation?.speed ?? 0,
+            age: Int(Date().timeIntervalSince(startTimeForEstimate ?? Date())),
+            lastUpdate: currentLocation?.timestamp ?? Date(),
+            lastHeartbeat: lastHeartbeatTimestamp,
+            isTracking: isTracking
+        )
+        
+        do {
+            liveActivity = try Activity.request(
+                attributes: attributes,
+                contentState: contentState,
+                pushType: nil
+            )
+            Self.logger.info("✅ Started Live Activity")
+        } catch {
+            Self.logger.error("❌ Failed to start Live Activity: \(error.localizedDescription)")
+        }
+    }
+    
+    private func updateLiveActivity() {
+        guard let activity = liveActivity else { return }
+        
+        let contentState = TraceWidgetsAttributes.ContentState(
+            latitude: currentLocation?.coordinate.latitude ?? 0,
+            longitude: currentLocation?.coordinate.longitude ?? 0,
+            altitude: currentLocation?.altitude ?? 0,
+            speed: currentLocation?.speed ?? 0,
+            age: Int(Date().timeIntervalSince(startTimeForEstimate ?? Date())),
+            lastUpdate: currentLocation?.timestamp ?? Date(),
+            lastHeartbeat: lastHeartbeatTimestamp,
+            isTracking: isTracking
+        )
+        
+        Task {
+            do {
+                try await activity.update(using: contentState, alertConfiguration: nil)
+                Self.logger.info("📍 Updated Live Activity")
+            } catch {
+                Self.logger.error("❌ Failed to update Live Activity: \(error.localizedDescription)")
+                // Try to restart Live Activity if update fails
+                if error.localizedDescription.contains("Activity not found") {
+                    startLiveActivity()
+                }
+            }
+        }
+    }
+    
+    private func endLiveActivity() {
+        guard let activity = liveActivity else { return }
+        
+        Task {
+            await activity.end(dismissalPolicy: .immediate)
+            liveActivity = nil
+            Self.logger.info("✅ Ended Live Activity")
+        }
+    }
+    
+    @MainActor
+    func triggerLiveActivityUpdate() {
+        updateLiveActivity()
+    }
+    
+    @MainActor
+    func updateLastHeartbeatTimestamp(_ date: Date) {
+        lastHeartbeatTimestamp = date
+        triggerLiveActivityUpdate()
+    }
+    
+    public func restartLiveActivity() {
+        startLiveActivity()
+    }
 }
 
 extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
+        
+        // Update current location
         currentLocation = location
         
         // Only save location if we're tracking this motion type and accuracy is good enough
@@ -390,24 +486,24 @@ extension LocationManager: CLLocationManagerDelegate {
             // Get or create file for this location's timestamp
             let file = await fileManager.getFileForDate(location.timestamp)
         
-        // Save location to Core Data
-        let context = PersistenceController.shared.container.viewContext
-        let locationPoint = LocationPoint(context: context)
-        
-        locationPoint.timestamp = location.timestamp
-        locationPoint.latitude = location.coordinate.latitude
-        locationPoint.longitude = location.coordinate.longitude
-        locationPoint.altitude = location.altitude
-        locationPoint.speed = location.speed
-        locationPoint.horizontalAccuracy = location.horizontalAccuracy
-        locationPoint.verticalAccuracy = location.verticalAccuracy
-        locationPoint.motionType = currentMotionType
-        
+            // Save location to Core Data
+            let context = PersistenceController.shared.container.viewContext
+            let locationPoint = LocationPoint(context: context)
+            
+            locationPoint.timestamp = location.timestamp
+            locationPoint.latitude = location.coordinate.latitude
+            locationPoint.longitude = location.coordinate.longitude
+            locationPoint.altitude = location.altitude
+            locationPoint.speed = location.speed
+            locationPoint.horizontalAccuracy = location.horizontalAccuracy
+            locationPoint.verticalAccuracy = location.verticalAccuracy
+            locationPoint.motionType = currentMotionType
+            
             // Associate with the file for this timestamp
             locationPoint.hourlyFile = file
         
-        do {
-            try context.save()
+            do {
+                try context.save()
                 await fileManager.pointAdded()
                 // Self.logger.info("📍 Saved point with accuracy: \(String(format: "%.0fm", location.horizontalAccuracy))")
             } catch {
@@ -418,7 +514,10 @@ extension LocationManager: CLLocationManagerDelegate {
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         self.error = error
-        Self.logger.error("❌ Location manager error: \(String(describing: error))")
+        Self.logger.error("❌ Location manager error: \(error.localizedDescription)")
+        
+        // Update Live Activity to show error state
+        updateLiveActivity()
     }
 } 
 
