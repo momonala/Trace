@@ -1,10 +1,12 @@
 """Visualize recent GPS coordinates using pydeck."""
+
 import pandas as pd
 import pydeck as pdk
 import requests
 from geopy.distance import geodesic
 from joblib import Memory
 from datetime import datetime
+
 memory = Memory(".cache")
 
 # Berlin center coordinates
@@ -44,7 +46,10 @@ def calculate_point_metrics(row: pd.Series) -> tuple[float, float, float]:
 
 
 @memory.cache
-def get_coordinates(lookback_hours: int = 24, today: datetime = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)) -> pd.DataFrame:
+def get_coordinates(
+    lookback_hours: int = 24,
+    today: datetime = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0),
+) -> pd.DataFrame:
     response = requests.get(
         f"https://full-primarily-weevil.ngrok-free.app/incognita/coordinates?lookback_hours={lookback_hours}"
     )
@@ -197,7 +202,7 @@ def main():
     deck = create_deck_map(df)
 
     # Save to HTML file
-    output_file = f"recent_locations.html"
+    output_file = "recent_locations.html"
     deck.to_html(output_file, open_browser=True)
     print(f"Map saved to {output_file}")
 
