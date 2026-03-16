@@ -142,6 +142,7 @@ struct ContentView: View {
         span: MKCoordinateSpan(latitudeDelta: 0.10, longitudeDelta: 0.10)
     )
     @State private var isMapTrackingEnabled = false
+    @State private var hasAutoFocusedOnStartup = false
     @State private var displayedCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)] = []
     
     private func focusOnCurrentLocation() {
@@ -153,6 +154,12 @@ struct ContentView: View {
             )
             isMapTrackingEnabled = true
         }
+    }
+    
+    private func autoFocusOnStartupIfNeeded() {
+        guard !hasAutoFocusedOnStartup, locationManager.currentLocation != nil else { return }
+        hasAutoFocusedOnStartup = true
+        focusOnCurrentLocation()
     }
     
     var body: some View {
@@ -232,14 +239,10 @@ struct ContentView: View {
             }
             
             locationManager.requestPermissions()
-            
-            // Initial location focus only (no data load)
-            if let location = locationManager.currentLocation {
-                region = MKCoordinateRegion(
-                    center: location.coordinate,
-                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                )
-            }
+            autoFocusOnStartupIfNeeded()
+        }
+        .onChange(of: locationManager.currentLocation) { _, _ in
+            autoFocusOnStartupIfNeeded()
         }
         // Add gesture recognizer to disable tracking when user interacts with map
         .gesture(
