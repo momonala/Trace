@@ -5,6 +5,26 @@ import CoreData
 import Combine
 import ActivityKit
 
+struct MapCoordinate: Decodable {
+    let timestamp: String
+    let latitude: Double
+    let longitude: Double
+}
+
+struct CoordinatesResponse: Decodable {
+    let status: String
+    let count: Int
+    let lookbackHours: Int
+    let paths: [[MapCoordinate]]
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case count
+        case lookbackHours = "lookback_hours"
+        case paths
+    }
+}
+
 @MainActor
 class LocationManager: NSObject, ObservableObject {
     static let shared = LocationManager()
@@ -27,15 +47,13 @@ class LocationManager: NSObject, ObservableObject {
     @Published var mapRefreshError: Error?
     @Published var pointsLast24h: Int = 0
     @Published var pointsLabel = "Points 0d"
-    @Published var mapCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)] = []
+    @Published var mapPaths: [[MapCoordinate]] = []
     @Published var lastHeartbeatTimestamp: Date? = nil
     
     // Persisted settings
     @Published private(set) var minimumAccuracy: Double
     @Published private(set) var lookbackDays: Double
-    @Published private(set) var minimumPointsPerSegment: Double
     @Published private(set) var requiredMotionSeconds: Double
-    @Published private(set) var maxDistance: Int
     
     // Timer state
     private var startTimeForEstimate: Date?
@@ -56,16 +74,10 @@ class LocationManager: NSObject, ObservableObject {
         
         let savedLookback = UserDefaults.standard.double(forKey: "lookbackDays")
         lookbackDays = savedLookback != 0 ? savedLookback : 1.0
-        
-        let savedPoints = UserDefaults.standard.double(forKey: "minimumPointsPerSegment")
-        minimumPointsPerSegment = savedPoints != 0 ? savedPoints : 20.0
-        
+
         let savedMotionSeconds = UserDefaults.standard.double(forKey: "requiredMotionSeconds")
         requiredMotionSeconds = savedMotionSeconds != 0 ? savedMotionSeconds : 3.0
-        
-        let savedMaxDistance = UserDefaults.standard.integer(forKey: "maxDistance")
-        maxDistance = savedMaxDistance != 0 ? savedMaxDistance : 100
-        
+
         super.init()
         
         // Set up property observers after super.init
@@ -120,29 +132,11 @@ class LocationManager: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
             
-        // Create a publisher for minimumPointsPerSegment
-        $minimumPointsPerSegment
-            .dropFirst()
-            .sink { [weak self] newValue in
-                UserDefaults.standard.set(newValue, forKey: "minimumPointsPerSegment")
-                self?.objectWillChange.send()
-            }
-            .store(in: &cancellables)
-            
         // Create a publisher for requiredMotionSeconds
         $requiredMotionSeconds
             .dropFirst()
             .sink { [weak self] newValue in
                 UserDefaults.standard.set(newValue, forKey: "requiredMotionSeconds")
-                self?.objectWillChange.send()
-            }
-            .store(in: &cancellables)
-        
-        // Create a publisher for maxDistance
-        $maxDistance
-            .dropFirst()
-            .sink { [weak self] newValue in
-                UserDefaults.standard.set(newValue, forKey: "maxDistance")
                 self?.objectWillChange.send()
             }
             .store(in: &cancellables)
@@ -157,16 +151,8 @@ class LocationManager: NSObject, ObservableObject {
         lookbackDays = value
     }
     
-    func setMinimumPointsPerSegment(_ value: Double) {
-        minimumPointsPerSegment = value
-    }
-    
     func setRequiredMotionSeconds(_ value: Double) {
         requiredMotionSeconds = value
-    }
-    
-    func setMaxDistance(_ value: Int) {
-        maxDistance = value
     }
     
     func refreshMapData() async {
@@ -195,11 +181,8 @@ class LocationManager: NSObject, ObservableObject {
         }
         
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        // Add query parameters
         urlComponents?.queryItems = [
-            URLQueryItem(name: "lookback_hours", value: String(lookbackHours)),
-            URLQueryItem(name: "min_accuracy", value: String(Int(minimumAccuracy))),
-            URLQueryItem(name: "max_distance", value: String(maxDistance))
+            URLQueryItem(name: "lookback_hours", value: String(lookbackHours))
         ]
         
         guard let finalURL = urlComponents?.url else {
@@ -228,35 +211,21 @@ class LocationManager: NSObject, ObservableObject {
                 return
             }
             
-            // First decode as JSON
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let status = json["status"] as? String,
-                  let count = json["count"] as? Int,
-                  let coordinates = json["coordinates"] as? [[Any]] else {
-                let error = NSError(domain: "com.trace", code: 5, userInfo: [NSLocalizedDescriptionKey: "Invalid data format from server"])
+            let decoder = JSONDecoder()
+            let payload = try decoder.decode(CoordinatesResponse.self, from: data)
+            
+            if payload.status != "success" {
+                let error = NSError(domain: "com.trace", code: 6, userInfo: [NSLocalizedDescriptionKey: "Server returned error status"])
                 Self.logger.error("❌ \(error.localizedDescription)")
                 mapRefreshError = error
                 return
             }
-            
-            if status == "success" {
-                pointsLast24h = count
-                mapCoordinates = coordinates.compactMap { coord -> (timestamp: String, latitude: Double, longitude: Double, accuracy: Double)? in
-                    guard coord.count >= 4,
-                          let timestamp = coord[0] as? String,
-                          let lat = coord[1] as? Double,
-                          let lon = coord[2] as? Double,
-                          let accuracy = coord[3] as? Double else {
-                        return nil
-                    }
-                    return (timestamp: timestamp, latitude: lat, longitude: lon, accuracy: accuracy)
-                }
-                Self.logger.info("📍 Loaded \(count) points from API (lookback: \(lookbackHours)h, accuracy: ≤\(Int(self.minimumAccuracy))m, distance: ≤\(self.maxDistance)m)")
-            } else {
-                let error = NSError(domain: "com.trace", code: 6, userInfo: [NSLocalizedDescriptionKey: "Server returned error status"])
-                Self.logger.error("❌ \(error.localizedDescription)")
-                mapRefreshError = error
-            }
+
+            pointsLast24h = payload.count
+            mapPaths = payload.paths
+            Self.logger.info(
+                "📍 Loaded \(payload.count) points across \(payload.paths.count) paths from API (lookback: \(payload.lookbackHours)h)"
+            )
         } catch {
             Self.logger.error("❌ Map refresh failed: \(error.localizedDescription)")
             mapRefreshError = error

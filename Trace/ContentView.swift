@@ -14,32 +14,20 @@ struct MapView: UIViewRepresentable {
     private static let logger = LoggerUtil(category: "mapView")
     
     let region: MKCoordinateRegion
-    let coordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)]
+    let paths: [[MapCoordinate]]
     let isTrackingEnabled: Bool
-    let minimumPointsPerSegment: Int
-    let minimumAccuracy: Double
     let lookbackDays: Double
-    let maxDistance: Int
     
-    private func calculateCoordinatesHash() -> Int {
-        guard !coordinates.isEmpty else { return 0 }
-        // Hash based on coordinates and all map settings
-        let count = coordinates.count
-        let first = coordinates[0]
-        let last = coordinates[count - 1]
-        
-        // Create settings hash component
-        let settingsHash = Int(minimumAccuracy * 100) + 
-                          minimumPointsPerSegment * 1000 + 
-                          Int(lookbackDays * 10000) +
-                          maxDistance * 100000
-        
-        return count + 
-               Int(first.latitude * 1000000) + 
-               Int(first.longitude * 1000000) + 
-               Int(last.latitude * 1000000) + 
-               Int(last.longitude * 1000000) + 
-               settingsHash
+    private func calculatePathsHash() -> Int {
+        let pointCount = paths.reduce(0) { $0 + $1.count }
+        guard pointCount > 0, let first = paths.first?.first, let last = paths.last?.last else { return 0 }
+
+        return pointCount
+            + Int(first.latitude * 1_000_000)
+            + Int(first.longitude * 1_000_000)
+            + Int(last.latitude * 1_000_000)
+            + Int(last.longitude * 1_000_000)
+            + Int(lookbackDays * 10_000)
     }
     
     func makeUIView(context: Context) -> MKMapView {
@@ -53,61 +41,34 @@ struct MapView: UIViewRepresentable {
         view.setRegion(region, animated: true)
         view.userTrackingMode = isTrackingEnabled ? .follow : .none
         
-        // Only redraw polylines if coordinates have changed
-        let currentHash = calculateCoordinatesHash()
+        // Only redraw polylines if paths have changed
+        let currentHash = calculatePathsHash()
         if context.coordinator.lastCoordinatesHash != currentHash {
             context.coordinator.lastCoordinatesHash = currentHash
             
             // Remove existing overlays
             view.removeOverlays(view.overlays)
-            
-            // Create segments based on time gaps
-            var currentSegment: [CLLocationCoordinate2D] = []
-            var segments: [[CLLocationCoordinate2D]] = []
-            
-            let dateFormatter = ISO8601DateFormatter()
-            dateFormatter.formatOptions = [.withInternetDateTime]
-            
-            for i in 0..<coordinates.count {
-                let coord = CLLocationCoordinate2D(latitude: coordinates[i].latitude, longitude: coordinates[i].longitude)
-                
-                if i > 0 {
-                    // Check time difference with previous point
-                    if let prevTime = dateFormatter.date(from: coordinates[i-1].timestamp),
-                       let currTime = dateFormatter.date(from: coordinates[i].timestamp) {
-                        let timeDiff = currTime.timeIntervalSince(prevTime)
-                        
-                        if timeDiff > 5 { // More than 5 seconds gap, create a new segment
-                            if !currentSegment.isEmpty {
-                                segments.append(currentSegment)
-                                currentSegment = []
-                            }
-                        }
-                    }
-                }
-                
-                currentSegment.append(coord)
-            }
-            
-            // Add the last segment if not empty
-            if !currentSegment.isEmpty {
-                segments.append(currentSegment)
-            }
-            
-            // Create polylines for each segment (only if segment has minimum required points)
-            var validSegmentsCount = 0
+
+            var validPathsCount = 0
             var totalPoints = 0
-            for segment in segments {
-                if segment.count >= minimumPointsPerSegment {
-                    let polyline = MKPolyline(coordinates: segment, count: segment.count)
-                    view.addOverlay(polyline)
-                    validSegmentsCount += 1
-                    totalPoints += segment.count
+            for path in paths {
+                guard path.count >= 2 else { continue }
+
+                let coordinates = path.map {
+                    CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
                 }
+                let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+                view.addOverlay(polyline)
+                validPathsCount += 1
+                totalPoints += coordinates.count
             }
-            
-            Self.logger.info("📍 Plotting \(totalPoints) points in \(validSegmentsCount) segments (min points per segment: \(minimumPointsPerSegment))")
-            
+
+            Self.logger.info("📍 Plotting \(totalPoints) points in \(validPathsCount) paths")
+
+            if !paths.isEmpty, validPathsCount == 0 {
+                Self.logger.info("⚠️ Received \(paths.count) paths, but none had enough points to render")
+            }
+
             // Notify that plotting is complete after a short delay to allow rendering
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 NotificationCenter.default.post(name: NSNotification.Name("PlottingComplete"), object: nil)
@@ -143,7 +104,7 @@ struct ContentView: View {
     )
     @State private var isMapTrackingEnabled = false
     @State private var hasAutoFocusedOnStartup = false
-    @State private var displayedCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)] = []
+    @State private var displayedPaths: [[MapCoordinate]] = []
     
     private func focusOnCurrentLocation() {
         guard let location = locationManager.currentLocation else { return }
@@ -169,19 +130,16 @@ struct ContentView: View {
                 // Map as full background with daily path
                 MapView(
                     region: region,
-                    coordinates: displayedCoordinates,
+                    paths: displayedPaths,
                     isTrackingEnabled: isMapTrackingEnabled,
-                    minimumPointsPerSegment: Int(locationManager.minimumPointsPerSegment),
-                    minimumAccuracy: locationManager.minimumAccuracy,
-                    lookbackDays: locationManager.lookbackDays,
-                    maxDistance: locationManager.maxDistance
+                    lookbackDays: locationManager.lookbackDays
                 )
                 .edgesIgnoringSafeArea(.all)
                 
                 // Stats Panel overlay
                 VStack {
                     HStack {
-                        StatsPanel(displayedCoordinates: $displayedCoordinates)
+                        StatsPanel(displayedPaths: $displayedPaths)
                             .background(Color.black.opacity(0.7))
                             .cornerRadius(10)
                             .fixedSize(horizontal: true, vertical: false)
@@ -216,7 +174,7 @@ struct ContentView: View {
             .tag(0)
             
             // Settings Tab
-            SettingsView(displayedCoordinates: $displayedCoordinates)
+            SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
@@ -292,7 +250,7 @@ struct StatsPanel: View {
     @State private var showRefreshError = false
     @State private var isLoadingCoordinates = false
     @State private var isPlottingCoordinates = false
-    @Binding var displayedCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)]
+    @Binding var displayedPaths: [[MapCoordinate]]
     private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
     
     private func formatCoordinates(_ location: CLLocation) -> String {
@@ -381,7 +339,7 @@ struct StatsPanel: View {
                         isLoadingCoordinates = false
                         
                         isPlottingCoordinates = true
-                        displayedCoordinates = locationManager.mapCoordinates
+                        displayedPaths = locationManager.mapPaths
                         // Add slight delay to allow map to process
                         try? await Task.sleep(nanoseconds: 1_500_000_000)
                         isPlottingCoordinates = false

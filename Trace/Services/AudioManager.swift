@@ -88,7 +88,7 @@ class AudioManager {
         var asbd = format.streamDescription.pointee
         ExtAudioFileSetProperty(audioFile, kExtAudioFileProperty_ClientDataFormat, UInt32(MemoryLayout<AudioStreamBasicDescription>.size), &asbd)
         
-        var frames = buffer.frameLength
+        let frames = buffer.frameLength
         ExtAudioFileWrite(audioFile, frames, buffer.audioBufferList)
         ExtAudioFileDispose(audioFile)
         

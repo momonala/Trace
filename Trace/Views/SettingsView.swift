@@ -7,27 +7,17 @@ struct SettingsView: View {
     @State private var alertMessage = ""
     @State private var isTestingAPI = false
     @State private var currentTime = Date()
-    @Binding var displayedCoordinates: [(timestamp: String, latitude: Double, longitude: Double, accuracy: Double)]
     
     private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
     private let accuracyOptions = [5.0, 10.0, 20.0, 50.0, 80.0, 100.0, 150.0, 200.0, 250.0, 350.0, 500.0, 1000.0]
     private let lookbackOptions = [0.0, 1.0, 2.0, 3.0, 7.0, 14.0, 30.0, 60.0, 90.0, 180.0, 365.0]
-    private let pathLengthOptions = [5.0, 10.0, 20.0, 40.0, 50.0, 100.0]
     private let motionDurationOptions = [0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0]
-    private let maxDistanceOptions = [5, 10, 20, 50, 75, 90, 100, 200, 300, 500]
-    
-    private let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }()
     
     var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("Location Settings")) {
-                    Picker("Required Motion Duration", selection: .init(
+                    Picker("Required Motion Duration", selection: Binding<Double>(
                         get: { locationManager.requiredMotionSeconds },
                         set: { locationManager.setRequiredMotionSeconds($0) }
                     )) {
@@ -54,7 +44,7 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Map Settings")) {
-                    Picker("Minimum Accuracy", selection: .init(
+                    Picker("Minimum Accuracy", selection: Binding<Double>(
                         get: { locationManager.minimumAccuracy },
                         set: { locationManager.setMinimumAccuracy($0) }
                     )) {
@@ -65,18 +55,7 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.menu)
                     
-                    Picker("Maximum Distance", selection: .init(
-                        get: { locationManager.maxDistance },
-                        set: { locationManager.setMaxDistance($0) }
-                    )) {
-                        ForEach(maxDistanceOptions, id: \.self) { meters in
-                            Text("\(meters)m")
-                                .tag(meters)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    
-                    Picker("History Lookback", selection: .init(
+                    Picker("History Lookback", selection: Binding<Double>(
                         get: { locationManager.lookbackDays },
                         set: { locationManager.setLookbackDays($0) }
                     )) {
@@ -98,20 +77,13 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.menu)
                     
-                    Picker("Minimum Path Length", selection: .init(
-                        get: { locationManager.minimumPointsPerSegment },
-                        set: { locationManager.setMinimumPointsPerSegment($0) }
-                    )) {
-                        ForEach(pathLengthOptions, id: \.self) { points in
-                            Text("\(Int(points)) points")
-                                .tag(points)
-                        }
-                    }
-                    .pickerStyle(.menu)
                 }
                 
                 Section(header: Text("Upload Settings")) {
-                    Toggle("Auto-Upload Files", isOn: $fileManager.isAutoUploadEnabled)
+                    Toggle("Auto-Upload Files", isOn: Binding<Bool>(
+                        get: { fileManager.isAutoUploadEnabled },
+                        set: { fileManager.isAutoUploadEnabled = $0 }
+                    ))
                         .help("Automatically attempts to upload files every minute when new files are created")
                     
                     if let lastUpload = fileManager.lastUploadAttempt {
@@ -199,5 +171,5 @@ struct SettingsView: View {
 } 
 
 #Preview {
-    SettingsView(displayedCoordinates: .constant([]))
+    SettingsView()
 }
