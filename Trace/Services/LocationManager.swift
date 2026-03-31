@@ -416,24 +416,29 @@ extension LocationManager: CLLocationManagerDelegate {
         guard isTrackingMotionType else { return }
         guard location.horizontalAccuracy <= minimumAccuracy else { return }
 
+        let motionType = currentMotionType
         Task {
             let file = await fileManager.getFileForDate(location.timestamp)
+            let fileObjectID = file.objectID
 
-            let context = PersistenceController.shared.container.viewContext
-            let locationPoint = LocationPoint(context: context)
-
-            locationPoint.timestamp = location.timestamp
-            locationPoint.latitude = location.coordinate.latitude
-            locationPoint.longitude = location.coordinate.longitude
-            locationPoint.altitude = location.altitude
-            locationPoint.speed = location.speed
-            locationPoint.horizontalAccuracy = location.horizontalAccuracy
-            locationPoint.verticalAccuracy = location.verticalAccuracy
-            locationPoint.motionType = currentMotionType
-            locationPoint.hourlyFile = file
-
+            let bgContext = PersistenceController.shared.newBackgroundContext()
             do {
-                try context.save()
+                try await bgContext.perform {
+                    guard let fileInBg = try bgContext.existingObject(with: fileObjectID) as? HourlyFile else {
+                        throw NSError(domain: "com.trace", code: 0, userInfo: [NSLocalizedDescriptionKey: "File not found in background context"])
+                    }
+                    let locationPoint = LocationPoint(context: bgContext)
+                    locationPoint.timestamp = location.timestamp
+                    locationPoint.latitude = location.coordinate.latitude
+                    locationPoint.longitude = location.coordinate.longitude
+                    locationPoint.altitude = location.altitude
+                    locationPoint.speed = location.speed
+                    locationPoint.horizontalAccuracy = location.horizontalAccuracy
+                    locationPoint.verticalAccuracy = location.verticalAccuracy
+                    locationPoint.motionType = motionType
+                    locationPoint.hourlyFile = fileInBg
+                    try bgContext.save()
+                }
                 await fileManager.pointAdded()
             } catch {
                 Self.logger.error("❌ Error saving location: \(String(describing: error))")

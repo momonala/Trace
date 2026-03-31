@@ -223,7 +223,11 @@ class ServerAPIManager {
     private func loadQueuedFilesCount() async {
         let context = PersistenceController.shared.container.viewContext
         let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
-        request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", currentHourlyFile ?? 0)
+        if let current = currentHourlyFile {
+            request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", current)
+        } else {
+            request.predicate = NSPredicate(format: "uploadStatus != %@ AND points.@count > 0", "completed")
+        }
 
         do {
             queuedFiles = try context.count(for: request)
@@ -241,7 +245,11 @@ class ServerAPIManager {
 
         let context = PersistenceController.shared.container.viewContext
         let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
-        request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", currentHourlyFile ?? 0)
+        if let current = currentHourlyFile {
+            request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", current)
+        } else {
+            request.predicate = NSPredicate(format: "uploadStatus != %@ AND points.@count > 0", "completed")
+        }
         request.sortDescriptors = [NSSortDescriptor(keyPath: \HourlyFile.startTime, ascending: true)]
 
         do {
@@ -249,11 +257,6 @@ class ServerAPIManager {
             Self.logger.info("📦 Found \(String(describing: filesToUpload.count)) files with points to upload")
 
             if filesToUpload.isEmpty {
-                uploadError = NSError(
-                    domain: "com.trace",
-                    code: 0,
-                    userInfo: [NSLocalizedDescriptionKey: "No files ready for upload."]
-                )
                 Self.logger.info("ℹ️ No files to upload")
                 return
             }

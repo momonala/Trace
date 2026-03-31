@@ -9,13 +9,18 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
+// NOTE: Must stay in sync with Trace/Models/TraceActivityAttributes.swift.
+// The correct long-term fix is to add that file to both targets in Xcode
+// so there is only one definition shared across the app and widget extension.
 struct TraceWidgetsAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         var latitude: Double
         var longitude: Double
         var altitude: Double
         var speed: Double
+        var age: Int
         var lastUpdate: Date
+        var lastHeartbeat: Date?
         var isTracking: Bool
     }
 
@@ -120,8 +125,10 @@ extension TraceWidgetsAttributes.ContentState {
             latitude: 52.4004,
             longitude: 13.2387,
             altitude: 51.2,
-            speed: 2.0/3.6, // Convert km/h to m/s
+            speed: 2.0/3.6,
+            age: 0,
             lastUpdate: Date(),
+            lastHeartbeat: nil,
             isTracking: true
         )
     }
