@@ -104,8 +104,8 @@ class ServerAPIManager: ObservableObject {
                 guard let self = self else { return }
                 
                 // Perform upload if there are files to upload
-                if self.queuedFiles > 0 {
-                    Self.logger.info("🔄 Starting scheduled auto-upload")
+                if await self.queuedFiles > 0 {
+                    await Self.logger.info("🔄 Starting scheduled auto-upload")
                     await self.uploadAllFiles()
                 }
             }
@@ -365,7 +365,7 @@ class ServerAPIManager: ObservableObject {
         request.httpBody = jsonData
         
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await URLSession.shared.data(for: request)
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 return NSError(

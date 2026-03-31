@@ -101,13 +101,37 @@ class LocationManager: NSObject, ObservableObject {
         switchToSignificantLocationChanges()
         Self.logger.info("⏳ Started with significant location changes...")
         
-        // Start Live Activity
-        startLiveActivity()
+        // End any orphaned activities from previous sessions before starting a new one
+        Task {
+            await endAllOrphanedLiveActivities()
+            startLiveActivity()
+        }
+
+        // End live activity when app is terminated
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppTermination),
+            name: UIApplication.willTerminateNotification,
+            object: nil
+        )
     }
-    
+
+    @objc private func handleAppTermination() {
+        // Use a semaphore to block briefly so the async end can complete before the process dies
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            if let activity = liveActivity {
+                await activity.end(nil, dismissalPolicy: .immediate)
+                liveActivity = nil
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+    }
+
     deinit {
         audioManager.stopPlayingInBackground()
-//        endLiveActivity()
+        NotificationCenter.default.removeObserver(self)
     }
     
     private func setupPropertyObservers() {
@@ -352,7 +376,14 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     // MARK: - Live Activity Methods
-    
+
+    private func endAllOrphanedLiveActivities() async {
+        for activity in Activity<TraceWidgetsAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            Self.logger.info("🧹 Ended orphaned Live Activity: \(activity.id)")
+        }
+    }
+
     private func startLiveActivity() {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             Self.logger.info("❌ Live Activities are not enabled")
@@ -374,7 +405,7 @@ class LocationManager: NSObject, ObservableObject {
         do {
             liveActivity = try Activity.request(
                 attributes: attributes,
-                contentState: contentState,
+                content: ActivityContent(state: contentState, staleDate: nil),
                 pushType: nil
             )
             Self.logger.info("✅ Started Live Activity")
@@ -398,16 +429,8 @@ class LocationManager: NSObject, ObservableObject {
         )
         
         Task {
-            do {
-                try await activity.update(using: contentState, alertConfiguration: nil)
-                Self.logger.info("📍 Updated Live Activity")
-            } catch {
-                Self.logger.error("❌ Failed to update Live Activity: \(error.localizedDescription)")
-                // Try to restart Live Activity if update fails
-                if error.localizedDescription.contains("Activity not found") {
-                    startLiveActivity()
-                }
-            }
+            await activity.update(ActivityContent(state: contentState, staleDate: nil), alertConfiguration: nil)
+            Self.logger.info("📍 Updated Live Activity")
         }
     }
     
@@ -415,7 +438,7 @@ class LocationManager: NSObject, ObservableObject {
         guard let activity = liveActivity else { return }
         
         Task {
-            await activity.end(dismissalPolicy: .immediate)
+            await activity.end(nil, dismissalPolicy: .immediate)
             liveActivity = nil
             Self.logger.info("✅ Ended Live Activity")
         }
@@ -433,10 +456,15 @@ class LocationManager: NSObject, ObservableObject {
     }
     
     public func restartLiveActivity() {
-        startLiveActivity()
+        Task {
+            await endAllOrphanedLiveActivities()
+            liveActivity = nil
+            startLiveActivity()
+        }
     }
 }
 
+@MainActor
 extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
