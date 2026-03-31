@@ -96,7 +96,7 @@ struct MapView: UIViewRepresentable {
 } 
 
 struct ContentView: View {
-    @StateObject private var locationManager = LocationManager.shared
+    @State private var locationManager = LocationManager.shared
     @State private var selectedTab = 0
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 52.507328, longitude: 13.393625),
@@ -243,15 +243,15 @@ struct ContentView: View {
 }
 
 struct StatsPanel: View {
-    @StateObject private var locationManager = LocationManager.shared
-    @StateObject private var fileManager = ServerAPIManager.shared
+    @State private var locationManager = LocationManager.shared
+    @State private var fileManager = ServerAPIManager.shared
     @State private var currentTime = Date()
     @State private var showUploadError = false
     @State private var showRefreshError = false
     @State private var isLoadingCoordinates = false
     @State private var isPlottingCoordinates = false
     @Binding var displayedPaths: [[MapCoordinate]]
-    private let timer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     private func formatCoordinates(_ location: CLLocation) -> String {
         let coords = String(format: "%.6f, %.6f", location.coordinate.latitude, location.coordinate.longitude)
