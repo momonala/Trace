@@ -60,6 +60,10 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    .disabled(locationManager.regionModeEnabled)
+
+                    Toggle("Region Mode", isOn: $locationManager.regionModeEnabled)
+                        .help("Fetch all historical trips visible in the current map view, ignoring History Lookback.")
                 }
 
                 Section(header: Text("Upload Settings")) {

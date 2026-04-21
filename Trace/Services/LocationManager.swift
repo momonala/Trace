@@ -13,7 +13,7 @@ struct MapCoordinate: Decodable {
 struct CoordinatesResponse: Decodable {
     let status: String
     let count: Int
-    let lookbackHours: Int
+    let lookbackHours: Int?
     let paths: [[MapCoordinate]]
 
     private enum CodingKeys: String, CodingKey {
@@ -22,6 +22,13 @@ struct CoordinatesResponse: Decodable {
         case lookbackHours = "lookback_hours"
         case paths
     }
+}
+
+struct MapBoundingBox {
+    let minLat: Double
+    let maxLat: Double
+    let minLon: Double
+    let maxLon: Double
 }
 
 @Observable
@@ -60,6 +67,9 @@ class LocationManager: NSObject {
     var requiredMotionSeconds: Double {
         didSet { UserDefaults.standard.set(requiredMotionSeconds, forKey: "requiredMotionSeconds") }
     }
+    var regionModeEnabled: Bool {
+        didSet { UserDefaults.standard.set(regionModeEnabled, forKey: "regionModeEnabled") }
+    }
 
     // Timer state
     private var startTimeForEstimate: Date?
@@ -80,6 +90,8 @@ class LocationManager: NSObject {
 
         let savedMotionSeconds = UserDefaults.standard.double(forKey: "requiredMotionSeconds")
         requiredMotionSeconds = savedMotionSeconds != 0 ? savedMotionSeconds : 3.0
+
+        regionModeEnabled = UserDefaults.standard.bool(forKey: "regionModeEnabled")
 
         super.init()
 
@@ -134,20 +146,31 @@ class LocationManager: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    func refreshMapData() async {
+    private func lookbackHoursAndLabel() -> (hours: Int, label: String) {
+        if lookbackDays == 0 {
+            let midnight = Calendar.current.startOfDay(for: Date())
+            let hoursSinceMidnight = Int(ceil(Date().timeIntervalSince(midnight) / 3600))
+            return (hoursSinceMidnight, "Points Today")
+        }
+        return (Int(lookbackDays * 24), "Points \(Int(lookbackDays))d")
+    }
+
+    func refreshMapData(regionBBox: MapBoundingBox? = nil) async {
         mapRefreshError = nil
 
-        let lookbackHours: Int
-        if lookbackDays == 0 {
-            let calendar = Calendar.current
-            let now = Date()
-            let midnight = calendar.startOfDay(for: now)
-            let hoursSinceMidnight = Int(ceil(now.timeIntervalSince(midnight) / 3600))
-            lookbackHours = hoursSinceMidnight
-            pointsLabel = "Points Today"
+        let queryItems: [URLQueryItem]
+        if let bbox = regionBBox {
+            queryItems = [
+                URLQueryItem(name: "min_lat", value: String(bbox.minLat)),
+                URLQueryItem(name: "max_lat", value: String(bbox.maxLat)),
+                URLQueryItem(name: "min_lon", value: String(bbox.minLon)),
+                URLQueryItem(name: "max_lon", value: String(bbox.maxLon)),
+            ]
+            pointsLabel = "Points (region)"
         } else {
-            lookbackHours = Int(lookbackDays * 24)
-            pointsLabel = "Points \(Int(lookbackDays))d"
+            let (hours, label) = lookbackHoursAndLabel()
+            queryItems = [URLQueryItem(name: "lookback_hours", value: String(hours))]
+            pointsLabel = label
         }
 
         guard let url = URL(string: "\(ServerAPIManager.shared.serverBaseURL)/coordinates") else {
@@ -158,9 +181,7 @@ class LocationManager: NSObject {
         }
 
         var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        urlComponents?.queryItems = [
-            URLQueryItem(name: "lookback_hours", value: String(lookbackHours))
-        ]
+        urlComponents?.queryItems = queryItems
 
         guard let finalURL = urlComponents?.url else {
             let error = NSError(domain: "com.trace", code: 2, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
@@ -198,8 +219,11 @@ class LocationManager: NSObject {
 
             pointsLast24h = payload.count
             mapPaths = payload.paths
+            let modeDescription = regionBBox != nil
+                ? "region"
+                : "lookback: \(payload.lookbackHours.map { "\($0)h" } ?? "?")"
             Self.logger.info(
-                "📍 Loaded \(payload.count) points across \(payload.paths.count) paths from API (lookback: \(payload.lookbackHours)h)"
+                "📍 Loaded \(payload.count) points across \(payload.paths.count) paths from API (\(modeDescription))"
             )
         } catch {
             Self.logger.error("❌ Map refresh failed: \(error.localizedDescription)")

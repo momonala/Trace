@@ -139,7 +139,7 @@ struct ContentView: View {
                 // Stats Panel overlay
                 VStack {
                     HStack {
-                        StatsPanel(displayedPaths: $displayedPaths)
+                        StatsPanel(displayedPaths: $displayedPaths, region: $region)
                             .background(Color.black.opacity(0.7))
                             .cornerRadius(10)
                             .fixedSize(horizontal: true, vertical: false)
@@ -251,7 +251,19 @@ struct StatsPanel: View {
     @State private var isLoadingCoordinates = false
     @State private var isPlottingCoordinates = false
     @Binding var displayedPaths: [[MapCoordinate]]
+    @Binding var region: MKCoordinateRegion
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private func currentRegionBBox() -> MapBoundingBox {
+        let halfLat = region.span.latitudeDelta / 2
+        let halfLon = region.span.longitudeDelta / 2
+        return MapBoundingBox(
+            minLat: region.center.latitude - halfLat,
+            maxLat: region.center.latitude + halfLat,
+            minLon: region.center.longitude - halfLon,
+            maxLon: region.center.longitude + halfLon
+        )
+    }
     
     private func formatCoordinates(_ location: CLLocation) -> String {
         let coords = String(format: "%.6f, %.6f", location.coordinate.latitude, location.coordinate.longitude)
@@ -335,7 +347,10 @@ struct StatsPanel: View {
                 Button(action: {
                     Task {
                         isLoadingCoordinates = true
-                        await locationManager.refreshMapData()
+                        let bbox: MapBoundingBox? = locationManager.regionModeEnabled
+                            ? currentRegionBBox()
+                            : nil
+                        await locationManager.refreshMapData(regionBBox: bbox)
                         isLoadingCoordinates = false
                         
                         isPlottingCoordinates = true
