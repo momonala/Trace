@@ -13,9 +13,9 @@ import MapKit
 struct MapView: UIViewRepresentable {
     private static let logger = LoggerUtil(category: "mapView")
     
-    let region: MKCoordinateRegion
+    @Binding var region: MKCoordinateRegion
+    @Binding var isTrackingEnabled: Bool
     let paths: [[MapCoordinate]]
-    let isTrackingEnabled: Bool
     let lookbackDays: Double
     
     private func calculatePathsHash() -> Int {
@@ -38,7 +38,9 @@ struct MapView: UIViewRepresentable {
     }
     
     func updateUIView(_ view: MKMapView, context: Context) {
-        view.setRegion(region, animated: true)
+        if !context.coordinator.isUserInteracting {
+            view.setRegion(region, animated: true)
+        }
         view.userTrackingMode = isTrackingEnabled ? .follow : .none
         
         // Only redraw polylines if paths have changed
@@ -77,12 +79,38 @@ struct MapView: UIViewRepresentable {
     }
     
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(region: $region, isTrackingEnabled: $isTrackingEnabled)
     }
-    
+
     class Coordinator: NSObject, MKMapViewDelegate {
         var lastCoordinatesHash: Int = 0
-        
+        var isUserInteracting = false
+        private var regionBinding: Binding<MKCoordinateRegion>
+        private var trackingBinding: Binding<Bool>
+
+        init(region: Binding<MKCoordinateRegion>, isTrackingEnabled: Binding<Bool>) {
+            self.regionBinding = region
+            self.trackingBinding = isTrackingEnabled
+        }
+
+        func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
+            if !animated {
+                isUserInteracting = true
+                trackingBinding.wrappedValue = false
+            }
+        }
+
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            isUserInteracting = false
+            let current = regionBinding.wrappedValue
+            let updated = mapView.region
+            let latDiff = abs(updated.center.latitude - current.center.latitude)
+            let lonDiff = abs(updated.center.longitude - current.center.longitude)
+            if latDiff > 0.00001 || lonDiff > 0.00001 {
+                regionBinding.wrappedValue = updated
+            }
+        }
+
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
@@ -129,9 +157,9 @@ struct ContentView: View {
             ZStack {
                 // Map as full background with daily path
                 MapView(
-                    region: region,
+                    region: $region,
+                    isTrackingEnabled: $isMapTrackingEnabled,
                     paths: displayedPaths,
-                    isTrackingEnabled: isMapTrackingEnabled,
                     lookbackDays: locationManager.lookbackDays
                 )
                 .edgesIgnoringSafeArea(.all)
