@@ -173,7 +173,7 @@ struct ContentView: View {
                             .fixedSize(horizontal: true, vertical: false)
                         Spacer()
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 2)
                     .padding(.horizontal)
                     
                     Spacer()
@@ -226,6 +226,7 @@ struct ContentView: View {
             
             locationManager.requestPermissions()
             autoFocusOnStartupIfNeeded()
+            Task { await HealthManager.shared.requestPermissionsAndLoad() }
         }
         .onChange(of: locationManager.currentLocation) { _, _ in
             autoFocusOnStartupIfNeeded()
@@ -273,6 +274,8 @@ struct ContentView: View {
 struct StatsPanel: View {
     @State private var locationManager = LocationManager.shared
     @State private var fileManager = ServerAPIManager.shared
+    @State private var healthManager = HealthManager.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var currentTime = Date()
     @State private var showUploadError = false
     @State private var showRefreshError = false
@@ -281,6 +284,10 @@ struct StatsPanel: View {
     @Binding var displayedPaths: [[MapCoordinate]]
     @Binding var region: MKCoordinateRegion
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private func fmtSteps(_ count: Int) -> String {
+        count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : "\(count)"
+    }
 
     private func currentRegionBBox() -> MapBoundingBox {
         let halfLat = region.span.latitudeDelta / 2
@@ -344,7 +351,20 @@ struct StatsPanel: View {
                 StatsRow(title: locationManager.pointsLabel, value: "\(locationManager.pointsLast24h)")
                 StatsRow(title: "Files Queued", value: "\(fileManager.queuedFiles)")
             }
-            
+
+            // Row 5: Health (today's activity from HealthKit)
+            if healthManager.isAvailable {
+                Divider()
+                    .background(Color.white.opacity(0.5))
+
+                HStack(spacing: 12) {
+                    StatsRow(title: "Steps",   value: fmtSteps(healthManager.steps))
+                    StatsRow(title: "Kcal",    value: "\(healthManager.kcal)")
+                    StatsRow(title: "Km",      value: String(format: "%.1f", healthManager.km))
+                    StatsRow(title: "Flights", value: "\(healthManager.flights)")
+                }
+            }
+
             // Upload button and error handling
             VStack(spacing: 8) {
                 if fileManager.queuedFiles > 0 {
@@ -445,8 +465,13 @@ struct StatsPanel: View {
         }
         .padding(10)
         .foregroundColor(.white)
-        .onReceive(timer) { _ in
-            currentTime = Date()
+        .onReceive(timer) { now in
+            currentTime = now
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                Task { await healthManager.refresh() }
+            }
         }
     }
     
