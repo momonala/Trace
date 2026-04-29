@@ -56,6 +56,7 @@ class LocationManager: NSObject {
     var pointsLabel = "Points 0d"
     var mapPaths: [[MapCoordinate]] = []
     var lastHeartbeatTimestamp: Date? = nil
+    var todayPath: [[CLLocationCoordinate2D]] = []
 
     // Persisted settings — didSet writes to UserDefaults
     var minimumAccuracy: Double {
@@ -128,6 +129,29 @@ class LocationManager: NSObject {
         )
     }
 
+    func refreshTodayPath() async {
+        let midnight = Calendar.current.startOfDay(for: Date())
+        let hoursSinceMidnight = max(1, Int(ceil(Date().timeIntervalSince(midnight) / 3600)))
+
+        guard let url = URL(string: "\(fileManager.serverBaseURL)/coordinates"),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        components.queryItems = [URLQueryItem(name: "lookback_hours", value: String(hoursSinceMidnight))]
+        guard let finalURL = components.url else { return }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: finalURL)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
+            let payload = try JSONDecoder().decode(CoordinatesResponse.self, from: data)
+            guard payload.status == "success" else { return }
+            todayPath = payload.paths.map { seg in
+                seg.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+            }
+            Self.logger.info("🗺️ Today path loaded: \(payload.count) points")
+        } catch {
+            Self.logger.error("❌ Today path refresh failed: \(error.localizedDescription)")
+        }
+    }
+
     @objc private func handleAppTermination() {
         // Use a semaphore to block briefly so the async end can complete before the process dies
         let semaphore = DispatchSemaphore(value: 0)
@@ -173,7 +197,7 @@ class LocationManager: NSObject {
             pointsLabel = label
         }
 
-        guard let url = URL(string: "\(ServerAPIManager.shared.serverBaseURL)/coordinates") else {
+        guard let url = URL(string: "\(fileManager.serverBaseURL)/coordinates") else {
             let error = NSError(domain: "com.trace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
             Self.logger.error("❌ \(error.localizedDescription)")
             mapRefreshError = error
@@ -430,8 +454,7 @@ class LocationManager: NSObject {
     }
 }
 
-@MainActor
-extension LocationManager: CLLocationManagerDelegate {
+extension LocationManager: @preconcurrency CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
 

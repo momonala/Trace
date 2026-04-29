@@ -97,8 +97,8 @@ class ServerAPIManager {
         autoUploadTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { [weak self] in
                 guard let self = self else { return }
-                if self.queuedFiles > 0 {
-                    Self.logger.info("🔄 Starting scheduled auto-upload")
+                if await self.queuedFiles > 0 {
+                    await Self.logger.info("🔄 Starting scheduled auto-upload")
                     await self.uploadAllFiles()
                 }
             }

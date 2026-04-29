@@ -22,6 +22,18 @@ GPS points are written to CoreData locally and grouped into per-minute `HourlyFi
 
 The map view pulls historical paths from the server's `/coordinates` endpoint and renders them as polylines. Lookback range is configurable.
 
+### Ghost Trail
+
+When the app enters the foreground, it fetches today's path from the server's `/coordinates` endpoint (hours elapsed since midnight as the lookback window) and renders it as a ghost trail overlay on the map.
+
+The ghost trail renders as a semi-transparent orange polyline. On top of it, an animated highlight window (30 points, transparent → fully opaque) sweeps continuously along the path and loops, giving a visual sense of the day's movement sequence and direction.
+
+When historical data is loaded via "Refresh Map", the server paths render as a solid overlay on top of the ghost trail. The two overlays are independent — refreshing does not replace the ghost trail.
+
+### HealthKit Stats
+
+The stats panel shows today's step count, active calories, walking/running distance, and flights climbed — pulled directly from HealthKit once per minute. No server involvement.
+
 ### Live Activity
 
 A Lock Screen and Dynamic Island widget shows tracking status, the last GPS fix time, and the last server heartbeat — updated on each location fix. It's implemented as a separate extension target using ActivityKit.
@@ -41,10 +53,11 @@ A Lock Screen and Dynamic Island widget shows tracking status, the last GPS fix 
 
 ## Architecture
 
-The app is built around two singleton service classes, both using Swift's `@Observable` macro and running on `@MainActor`:
+The app is built around three singleton service classes, all using Swift's `@Observable` macro and running on `@MainActor`:
 
-- **`LocationManager`** — Owns the CoreMotion and CoreLocation pipelines. Manages the motion state machine, filters points by accuracy, writes `LocationPoint` records to CoreData on a background context, and manages the Live Activity lifecycle.
+- **`LocationManager`** — Owns the CoreMotion and CoreLocation pipelines. Manages the motion state machine, filters points by accuracy, writes `LocationPoint` records to CoreData on a background context, fetches today's ghost trail path from the server on foreground, and manages the Live Activity lifecycle.
 - **`ServerAPIManager`** — Owns the upload queue. Creates per-minute `HourlyFile` batches, manages the auto-upload timer, and sends heartbeats to the server.
+- **`HealthManager`** — Queries HealthKit for today's step count, calories, distance, and flights. Refreshed once per minute.
 - **`AudioManager`** — Generates and loops a silent WAV file to hold the audio background mode.
 
 Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persisted to `UserDefaults` via `didSet` and restored on launch.
@@ -53,11 +66,12 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 
 | File | Role |
 |---|---|
-| `LocationManager.swift` | Motion detection, GPS pipeline, Live Activity, map data refresh |
+| `LocationManager.swift` | Motion detection, GPS pipeline, today's ghost trail fetch, Live Activity |
 | `ServerAPIManager.swift` | Upload queue, per-minute file batching, heartbeat |
+| `HealthManager.swift` | HealthKit queries for daily activity stats |
 | `AudioManager.swift` | Silent background audio keep-alive |
 | `Persistence.swift` | CoreData stack (`LocationPoint`, `HourlyFile`) |
-| `ContentView.swift` | Map view (MapKit + polyline rendering) and stats overlay |
+| `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight) and stats panel |
 | `SettingsView.swift` | Configuration UI |
 | `TraceActivityAttributes.swift` | Live Activity data model |
 | `TraceWidgetsLiveActivity.swift` | Lock Screen and Dynamic Island widget UI |
@@ -76,8 +90,10 @@ graph LR
         FILT["Accuracy Filter\n≤ minimumAccuracy m"]
         CD[("CoreData\nLocationPoint")]
         BATCH["Per-minute batches\nHourlyFile"]
+        GT[("ghost_trail.json\n(today's path)")]
         HBT["Heartbeat Timer\n(3s interval)"]
-        MV["Map View\n(MapKit polylines)"]
+        MV["Map View\n(ghost trail + server polylines)"]
+        HK["HealthKit\n(steps, kcal, km, flights)"]
 
         CM --> SM
         SM -- stationary --> SLC
@@ -85,7 +101,10 @@ graph LR
         SLC -. "wakes on location change" .-> SM
         GPS --> FILT
         FILT --> CD
+        FILT --> GT
         CD --> BATCH
+        GT --> MV
+        HK --> MV
     end
 
     subgraph server["🖥️ Server - Incognita (Flask)"]
@@ -190,5 +209,5 @@ Resets the watchdog timer. Alerts fire via Telegram if this goes missing for mor
 
 - iOS 18.0+
 - Xcode 16+
-- Required entitlements: Background Location, Background Audio
+- Required entitlements: Background Location, Background Audio, HealthKit
 - A self-hosted server implementing the API above
