@@ -275,6 +275,7 @@ struct MapView: UIViewRepresentable {
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var locationManager = LocationManager.shared
+    @State private var fileManager = ServerAPIManager.shared
     @State private var selectedTab = 0
     @State private var region = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 52.507328, longitude: 13.393625),
@@ -283,7 +284,14 @@ struct ContentView: View {
     @State private var isMapTrackingEnabled = false
     @State private var hasAutoFocusedOnStartup = false
     @State private var displayedPaths: [[MapCoordinate]] = []
-    
+    @State private var isLoadingCoordinates = false
+    @State private var isPlottingCoordinates = false
+    @State private var showUploadError = false
+    @State private var showRefreshError = false
+    @State private var showNoQueuedFilesInfo = false
+
+    private let fabColumnTopOffset = UIScreen.main.bounds.height * 0.41
+
     private func focusOnCurrentLocation() {
         guard let location = locationManager.currentLocation else { return }
         withAnimation {
@@ -294,13 +302,57 @@ struct ContentView: View {
             isMapTrackingEnabled = true
         }
     }
-    
+
     private func autoFocusOnStartupIfNeeded() {
         guard !hasAutoFocusedOnStartup, locationManager.currentLocation != nil else { return }
         hasAutoFocusedOnStartup = true
         focusOnCurrentLocation()
     }
-    
+
+    private func currentRegionBBox() -> MapBoundingBox {
+        let halfLat = region.span.latitudeDelta / 2
+        let halfLon = region.span.longitudeDelta / 2
+        return MapBoundingBox(
+            minLat: region.center.latitude - halfLat,
+            maxLat: region.center.latitude + halfLat,
+            minLon: region.center.longitude - halfLon,
+            maxLon: region.center.longitude + halfLon
+        )
+    }
+
+    private func refreshMap() {
+        if !displayedPaths.isEmpty {
+            displayedPaths = []
+            return
+        }
+        Task {
+            isLoadingCoordinates = true
+            let bbox: MapBoundingBox? = locationManager.regionModeEnabled
+                ? currentRegionBBox()
+                : nil
+            await locationManager.refreshMapData(regionBBox: bbox)
+            isLoadingCoordinates = false
+
+            isPlottingCoordinates = true
+            displayedPaths = locationManager.mapPaths
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            isPlottingCoordinates = false
+
+            showRefreshError = locationManager.mapRefreshError != nil
+        }
+    }
+
+    private func uploadFiles() {
+        guard fileManager.queuedFiles > 0 else {
+            showNoQueuedFilesInfo = true
+            return
+        }
+        Task {
+            await fileManager.uploadAllFiles()
+            showUploadError = fileManager.uploadError != nil
+        }
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             // Live View Tab with Daily Path
@@ -314,35 +366,58 @@ struct ContentView: View {
                     lookbackDays: locationManager.lookbackDays
                 )
                 .edgesIgnoringSafeArea(.all)
-                
-                // Stats Panel overlay
+
                 VStack {
                     HStack {
-                        StatsPanel(displayedPaths: $displayedPaths, region: $region)
-                            .background(Color.black.opacity(0.7))
-                            .cornerRadius(10)
-                            .fixedSize(horizontal: true, vertical: false)
+                        StatsPanel(
+                            isLoadingCoordinates: $isLoadingCoordinates,
+                            isPlottingCoordinates: $isPlottingCoordinates,
+                            showUploadError: $showUploadError,
+                            showRefreshError: $showRefreshError,
+                            showNoQueuedFilesInfo: $showNoQueuedFilesInfo
+                        )
+                        .background(Color.black.opacity(0.7))
+                        .cornerRadius(10)
+                        .fixedSize(horizontal: true, vertical: false)
                         Spacer()
                     }
                     .padding(.top, 2)
                     .padding(.horizontal)
-                    
                     Spacer()
-                        .frame(height: UIScreen.main.bounds.height * 0.3)
-                    
-                    // Location tracking button
+                }
+
+                // Floating action buttons — independent layer so stats panel resizing doesn't shift them
+                VStack {
+                    Spacer()
+                        .frame(height: fabColumnTopOffset)
                     HStack {
                         Spacer()
-                        Button(action: focusOnCurrentLocation) {
-                            Image(systemName: "location.fill")
-                                .foregroundColor(isMapTrackingEnabled ? .blue : .white)
-                                .padding(12)
-                                .background(Color.black.opacity(0.7))
-                                .clipShape(Circle())
+                        VStack(spacing: 12) {
+                            Button(action: focusOnCurrentLocation) {
+                                MapFloatingButton(isBusy: false) {
+                                    Image(systemName: "location.fill")
+                                        .foregroundColor(isMapTrackingEnabled ? .blue : .white)
+                                }
+                            }
+
+                            Button(action: uploadFiles) {
+                                MapFloatingButton(isBusy: fileManager.isUploading) {
+                                    Image(systemName: "icloud.and.arrow.up")
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .disabled(fileManager.isUploading)
+
+                            Button(action: refreshMap) {
+                                MapFloatingButton(isBusy: isLoadingCoordinates || isPlottingCoordinates) {
+                                    Image(systemName: displayedPaths.isEmpty ? "arrow.clockwise" : "xmark")
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .disabled(isLoadingCoordinates || isPlottingCoordinates)
                         }
                         .padding(.trailing)
                     }
-                    
                     Spacer()
                 }
                 .edgesIgnoringSafeArea(.bottom)
@@ -402,32 +477,25 @@ struct ContentView: View {
         )
     }
     
-    private var settingsView: some View {
-        Form {
-            Section(header: Text("Server Status")) {
-                if let lastUpload = ServerAPIManager.shared.lastUploadAttempt {
-                    HStack {
-                        Text("Last Sent")
-                        Spacer()
-                        VStack(alignment: .trailing) {
-                            Text(lastUpload.formatted(.dateTime))
-                                .font(.footnote)
-                            Text(timeSinceLastUpload(lastUpload))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
+}
+
+private struct MapFloatingButton<Content: View>: View {
+    let isBusy: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Group {
+            if isBusy {
+                ProgressView()
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    .scaleEffect(0.8)
+            } else {
+                content()
             }
         }
-    }
-    
-    private func timeSinceLastUpload(_ date: Date) -> String {
-        let components = Calendar.current.dateComponents([.hour, .minute, .second], from: date, to: Date())
-        let hours = components.hour ?? 0
-        let minutes = components.minute ?? 0
-        let seconds = components.second ?? 0
-        return String(format: "%02d:%02d:%02d ago", hours, minutes, seconds)
+        .padding(12)
+        .background(Color.black.opacity(0.7))
+        .clipShape(Circle())
     }
 }
 
@@ -436,29 +504,17 @@ struct StatsPanel: View {
     @State private var fileManager = ServerAPIManager.shared
     @State private var healthManager = HealthManager.shared
     @State private var currentTime = Date()
-    @State private var showUploadError = false
-    @State private var showRefreshError = false
-    @State private var isLoadingCoordinates = false
-    @State private var isPlottingCoordinates = false
-    @Binding var displayedPaths: [[MapCoordinate]]
-    @Binding var region: MKCoordinateRegion
+    @Binding var isLoadingCoordinates: Bool
+    @Binding var isPlottingCoordinates: Bool
+    @Binding var showUploadError: Bool
+    @Binding var showRefreshError: Bool
+    @Binding var showNoQueuedFilesInfo: Bool
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private func fmtSteps(_ count: Int) -> String {
         count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : "\(count)"
     }
 
-    private func currentRegionBBox() -> MapBoundingBox {
-        let halfLat = region.span.latitudeDelta / 2
-        let halfLon = region.span.longitudeDelta / 2
-        return MapBoundingBox(
-            minLat: region.center.latitude - halfLat,
-            maxLat: region.center.latitude + halfLat,
-            minLon: region.center.longitude - halfLon,
-            maxLon: region.center.longitude + halfLon
-        )
-    }
-    
     private func formatCoordinates(_ location: CLLocation) -> String {
         let coords = String(format: "%.6f, %.6f", location.coordinate.latitude, location.coordinate.longitude)
         let accuracy = String(format: " ± %.0fm", location.horizontalAccuracy)
@@ -480,38 +536,32 @@ struct StatsPanel: View {
             Divider()
                 .background(Color.white.opacity(0.5))
             
-            // Row 2: Speed and Altitude
+            // Row 2: Speed and Altitude, Motion
             if let location = locationManager.currentLocation {
                 HStack(spacing: 12) {
                     StatsRow(title: "Speed", value: String(format: "%.1f km/h", location.speed * 3.6))
                     StatsRow(title: "Altitude", 
                             value: String(format: "%.0f ± %.0fm", location.altitude, location.verticalAccuracy))
+                    StatsRow(title: "Motion", value: locationManager.currentMotionType)
                 }
             }
+            
             
             Divider()
                 .background(Color.white.opacity(0.5))
             
-            // Row 3: Motion and Age
+            // Row 3: Buffer, Points Today, Files, Age
             HStack(spacing: 12) {
-                StatsRow(title: "Motion", value: locationManager.currentMotionType)
+                StatsRow(title: "Buffer", value: "\(fileManager.bufferSize)")
+                StatsRow(title: locationManager.pointsLabel, value: "\(locationManager.pointsLast24h)")
+                StatsRow(title: "Queue", value: "\(fileManager.queuedFiles)")
                 if let lastTime = fileManager.lastPointTime {
                     let timeSince = currentTime.timeIntervalSince(lastTime)
                     StatsRow(title: "Age", value: formatTimeInterval(timeSince))
                 }
             }
-            
-            Divider()
-                .background(Color.white.opacity(0.5))
-            
-            // Row 4: Buffer, Points Today, Files
-            HStack(spacing: 12) {
-                StatsRow(title: "Buffer", value: "\(fileManager.bufferSize)")
-                StatsRow(title: locationManager.pointsLabel, value: "\(locationManager.pointsLast24h)")
-                StatsRow(title: "Files Queued", value: "\(fileManager.queuedFiles)")
-            }
 
-            // Row 5: Health (today's activity from HealthKit)
+            // Row 4: Health (today's activity from HealthKit)
             if healthManager.isAvailable {
                 Divider()
                     .background(Color.white.opacity(0.5))
@@ -524,63 +574,17 @@ struct StatsPanel: View {
                 }
             }
 
-            // Upload button and error handling
-            VStack(spacing: 8) {
-                if fileManager.queuedFiles > 0 {
-                    Button(action: {
-                        Task {
-                            await fileManager.uploadAllFiles()
-                            showUploadError = fileManager.uploadError != nil
-                        }
-                    }) {
-                        HStack {
-                            if fileManager.isUploading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .scaleEffect(0.8)
-                            }
-                            Text(fileManager.isUploading ? "Uploading..." : "Upload Files")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .cornerRadius(6)
-                    }
-                    .disabled(fileManager.isUploading)
-                }
-                
-                Button(action: {
-                    Task {
-                        isLoadingCoordinates = true
-                        let bbox: MapBoundingBox? = locationManager.regionModeEnabled
-                            ? currentRegionBBox()
-                            : nil
-                        await locationManager.refreshMapData(regionBBox: bbox)
-                        isLoadingCoordinates = false
-                        
-                        isPlottingCoordinates = true
-                        displayedPaths = locationManager.mapPaths
-                        // Add slight delay to allow map to process
-                        try? await Task.sleep(nanoseconds: 1_500_000_000)
-                        isPlottingCoordinates = false
-                        
-                        showRefreshError = locationManager.mapRefreshError != nil
-                    }
-                }) {
-                    Text("Refresh Map")
-                        .font(.subheadline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .background(Color.blue)
-                        .cornerRadius(6)
-                }
-            }
-            
             // Status and Error messages
             VStack(spacing: 4) {
+                if showNoQueuedFilesInfo {
+                    ErrorMessage(
+                        icon: "tray",
+                        message: "No files queued for upload.",
+                        color: .gray,
+                        onDismiss: { showNoQueuedFilesInfo = false }
+                    )
+                }
+
                 if isLoadingCoordinates {
                     StatusMessage(
                         icon: "loading",
