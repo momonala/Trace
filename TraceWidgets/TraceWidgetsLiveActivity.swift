@@ -22,88 +22,169 @@ struct TraceWidgetsAttributes: ActivityAttributes {
         var lastUpdate: Date
         var lastHeartbeat: Date?
         var isTracking: Bool
+        var steps: Int
+        var kcal: Int
+        var km: Double
+        var flights: Int
+        var healthAvailable: Bool
     }
 
     var name: String
 }
 
+private let traceTeal = Color(red: 0.2, green: 0.78, blue: 0.82)
+
+private enum LiveActivityTypography {
+    static let row = Font.system(size: 16, weight: .regular, design: .monospaced)
+    static let compact = Font.system(size: 13, weight: .regular, design: .monospaced)
+    static let iconSize: CGFloat = 17
+}
+
 struct TraceWidgetsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TraceWidgetsAttributes.self) { context in
-            // Lock screen/banner UI
-            ZStack {
-                Color.black.opacity(0.85)
-                HStack {
-                    // Icon: left aligned
-                    Image(systemName: context.state.isTracking ? "location.fill" : "location.slash.fill")
-                        .foregroundColor(context.state.isTracking ? .green : .red)
-                        .frame(width: 25, alignment: .leading)
-
-                    // Center: Current time
-                    Text(formatTimestamp(Date()))
-                        .font(.system(.title3, design: .monospaced))
-                        .foregroundColor(.white)
-                        .kerning(-0.5)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    // Right: Last GPS update time
-                    Text(formatTimestamp(context.state.lastUpdate))
-                        .font(.system(.title3, design: .monospaced))
-                        .foregroundColor(context.state.isTracking ? .green : .red)
-                        .kerning(-0.5)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-            }
+            LiveActivityStatusRow(state: context.state, font: LiveActivityTypography.row)
+                .liveActivityChrome()
         } dynamicIsland: { context in
             DynamicIsland {
-                // Expanded UI
                 DynamicIslandExpandedRegion(.center) {
-                    ZStack {
-                        Color.black.opacity(0.85)
-                        
-                        HStack {
-                            // Icon: left aligned
-                            Image(systemName: context.state.isTracking ? "location.fill" : "location.slash.fill")
-                                .foregroundColor(context.state.isTracking ? .green : .red)
-                                .frame(width: 28, alignment: .leading)
-
-                            // Center: Current time
-                            Text(formatTimestamp(Date()))
-                                .font(.system(.title3, design: .monospaced))
-                                .foregroundColor(.white)
-                                .kerning(-0.5)
-                                .frame(maxWidth: .infinity, alignment: .center)
-
-                            // Right: Last GPS update time
-                            Text(formatTimestamp(context.state.lastUpdate))
-                                .font(.system(.title3, design: .monospaced))
-                                .foregroundColor(context.state.isTracking ? .green : .red)
-                                .kerning(-0.5)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                    }
+                    LiveActivityStatusRow(state: context.state, font: LiveActivityTypography.row)
+                        .liveActivityChrome()
                 }
             } compactLeading: {
-                HStack(spacing: 4) {
-                    Image(systemName: context.state.isTracking ? "location.fill" : "location.slash.fill")
-                        .foregroundColor(context.state.isTracking ? .green : .red)
-                    Text(formatTimestamp(context.state.lastUpdate))
-                        .font(.system(.caption2, design: .monospaced))
-                        .foregroundColor(.white)
-                }
+                LiveActivityIcon(
+                    systemName: context.state.isTracking ? "location.fill" : "location.slash.fill",
+                    font: LiveActivityTypography.compact,
+                    color: context.state.isTracking ? .green : .red
+                )
             } compactTrailing: {
-                Text(context.state.isTracking ? "Tracking" : "Paused")
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundColor(context.state.isTracking ? .green : .red)
+                if context.state.healthAvailable {
+                    LiveActivityHealthMetrics(
+                        state: context.state,
+                        font: LiveActivityTypography.compact,
+                        spacing: 6
+                    )
+                } else {
+                    LiveActivityText(
+                        formatTimestamp(context.state.lastUpdate),
+                        font: LiveActivityTypography.compact,
+                        color: context.state.isTracking ? .green : .red
+                    )
+                }
             } minimal: {
-                Image(systemName: context.state.isTracking ? "location.fill" : "location.slash.fill")
-                    .foregroundColor(context.state.isTracking ? .green : .red)
+                LiveActivityIcon(
+                    systemName: context.state.isTracking ? "location.fill" : "location.slash.fill",
+                    font: LiveActivityTypography.compact,
+                    color: context.state.isTracking ? .green : .red
+                )
             }
         }
+    }
+}
+
+private struct LiveActivityStatusRow: View {
+    let state: TraceWidgetsAttributes.ContentState
+    let font: Font
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                LiveActivityIcon(
+                    systemName: state.isTracking ? "location.fill" : "location.slash.fill",
+                    font: font,
+                    color: state.isTracking ? .green : .red
+                )
+
+                LiveActivityText(
+                    formatTimestamp(state.lastUpdate),
+                    font: font,
+                    color: state.isTracking ? .green : .red
+                )
+            }
+            .fixedSize(horizontal: true, vertical: false)
+
+            Spacer(minLength: 10)
+
+            if state.healthAvailable {
+                LiveActivityHealthMetrics(state: state, font: font, spacing: 10)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct LiveActivityHealthMetrics: View {
+    let state: TraceWidgetsAttributes.ContentState
+    let font: Font
+    let spacing: CGFloat
+
+    var body: some View {
+        HStack(spacing: spacing) {
+            HealthMetricItem(icon: "figure.walk", value: formatStepsForLiveActivity(state.steps), font: font, color: traceTeal)
+            HealthMetricItem(icon: "flame.fill", value: "\(state.kcal)", font: font, color: traceTeal)
+            HealthMetricItem(icon: "figure.run", value: String(format: "%.1f", state.km), font: font, color: traceTeal)
+            HealthMetricItem(icon: "figure.stairs", value: "\(state.flights)", font: font, color: traceTeal)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct HealthMetricItem: View {
+    let icon: String
+    let value: String
+    let font: Font
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 2) {
+            LiveActivityIcon(systemName: icon, font: font, color: color)
+            LiveActivityText(value, font: font, color: color)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct LiveActivityIcon: View {
+    let systemName: String
+    let font: Font
+    let color: Color
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(font)
+            .foregroundColor(color)
+            .frame(width: LiveActivityTypography.iconSize, height: LiveActivityTypography.iconSize)
+            .contentShape(Rectangle())
+    }
+}
+
+private struct LiveActivityText: View {
+    let text: String
+    let font: Font
+    let color: Color
+
+    init(_ text: String, font: Font, color: Color) {
+        self.text = text
+        self.font = font
+        self.color = color
+    }
+
+    var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundColor(color)
+            .kerning(-0.5)
+            .lineLimit(1)
+    }
+}
+
+private extension View {
+    func liveActivityChrome() -> some View {
+        self
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .activityBackgroundTint(.clear)
     }
 }
 
@@ -111,6 +192,17 @@ func formatTimestamp(_ date: Date) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm:ss"
     return formatter.string(from: date)
+}
+
+/// Shorter step labels so the Live Activity row does not truncate (e.g. 21k vs 21.1k).
+func formatStepsForLiveActivity(_ count: Int) -> String {
+    if count >= 10_000 {
+        return "\(count / 1000)k"
+    }
+    if count >= 1_000 {
+        return String(format: "%.1fk", Double(count) / 1000)
+    }
+    return "\(count)"
 }
 
 extension TraceWidgetsAttributes {
@@ -129,7 +221,12 @@ extension TraceWidgetsAttributes.ContentState {
             age: 0,
             lastUpdate: Date(),
             lastHeartbeat: nil,
-            isTracking: true
+            isTracking: true,
+            steps: 21_100,
+            kcal: 312,
+            km: 5.4,
+            flights: 8,
+            healthAvailable: true
         )
     }
 }

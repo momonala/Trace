@@ -381,16 +381,7 @@ class LocationManager: NSObject {
         }
 
         let attributes = TraceWidgetsAttributes(name: "Trace")
-        let contentState = TraceWidgetsAttributes.ContentState(
-            latitude: currentLocation?.coordinate.latitude ?? 0,
-            longitude: currentLocation?.coordinate.longitude ?? 0,
-            altitude: currentLocation?.altitude ?? 0,
-            speed: currentLocation?.speed ?? 0,
-            age: Int(Date().timeIntervalSince(startTimeForEstimate ?? Date())),
-            lastUpdate: currentLocation?.timestamp ?? Date(),
-            lastHeartbeat: lastHeartbeatTimestamp,
-            isTracking: isTracking
-        )
+        let contentState = makeLiveActivityContentState()
 
         do {
             liveActivity = try Activity.request(
@@ -404,10 +395,9 @@ class LocationManager: NSObject {
         }
     }
 
-    private func updateLiveActivity() {
-        guard let activity = liveActivity else { return }
-
-        let contentState = TraceWidgetsAttributes.ContentState(
+    private func makeLiveActivityContentState() -> TraceWidgetsAttributes.ContentState {
+        let health = HealthManager.shared
+        return TraceWidgetsAttributes.ContentState(
             latitude: currentLocation?.coordinate.latitude ?? 0,
             longitude: currentLocation?.coordinate.longitude ?? 0,
             altitude: currentLocation?.altitude ?? 0,
@@ -415,8 +405,19 @@ class LocationManager: NSObject {
             age: Int(Date().timeIntervalSince(startTimeForEstimate ?? Date())),
             lastUpdate: currentLocation?.timestamp ?? Date(),
             lastHeartbeat: lastHeartbeatTimestamp,
-            isTracking: isTracking
+            isTracking: isTracking,
+            steps: health.steps,
+            kcal: health.kcal,
+            km: health.km,
+            flights: health.flights,
+            healthAvailable: health.isAvailable
         )
+    }
+
+    private func updateLiveActivity() {
+        guard let activity = liveActivity else { return }
+
+        let contentState = makeLiveActivityContentState()
 
         Task {
             await activity.update(ActivityContent(state: contentState, staleDate: nil), alertConfiguration: nil)

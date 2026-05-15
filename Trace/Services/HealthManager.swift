@@ -49,6 +49,7 @@ class HealthManager {
         kcal    = Int(k)
         km      = d
         flights = Int(f)
+        LocationManager.shared.triggerLiveActivityUpdate()
     }
 
     private func querySum(type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async -> Double {

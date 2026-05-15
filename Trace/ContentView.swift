@@ -515,9 +515,20 @@ struct StatsPanel: View {
         count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : "\(count)"
     }
 
+    private func motionEmoji(for type: String) -> String {
+        switch type {
+        case "walking":    return "🚶🏽"
+        case "running":    return "👟"
+        case "cycling":    return "🚲"
+        case "automotive": return "🚗"
+        case "stationary": return "🐒"
+        default:           return "❓"
+        }
+    }
+
     private func formatCoordinates(_ location: CLLocation) -> String {
-        let coords = String(format: "%.6f, %.6f", location.coordinate.latitude, location.coordinate.longitude)
-        let accuracy = String(format: " ± %.0fm", location.horizontalAccuracy)
+        let coords = String(format: "%.5f, %.5f", location.coordinate.latitude, location.coordinate.longitude)
+        let accuracy = String(format: " ± %.0f", location.horizontalAccuracy)
         return coords + accuracy
     }
     
@@ -526,7 +537,7 @@ struct StatsPanel: View {
             // Row 1: Coordinates with tracking status
             if let location = locationManager.currentLocation {
                 StatsRow(
-                    title: "Coordinates",
+                    title: "Coordinates (m)",
                     value: formatCoordinates(location),
                     showTrackingStatus: true,
                     isTracking: locationManager.isTracking
@@ -539,10 +550,10 @@ struct StatsPanel: View {
             // Row 2: Speed and Altitude, Motion
             if let location = locationManager.currentLocation {
                 HStack(spacing: 12) {
-                    StatsRow(title: "Speed", value: String(format: "%.1f km/h", location.speed * 3.6))
-                    StatsRow(title: "Altitude", 
-                            value: String(format: "%.0f ± %.0fm", location.altitude, location.verticalAccuracy))
-                    StatsRow(title: "Motion", value: locationManager.currentMotionType)
+                    StatsRow(title: "Speed (km/h)", value: String(format: "%.1f", location.speed * 3.6))
+                    StatsRow(title: "Altitude (m)",
+                            value: String(format: "%.0f ± %.0f", location.altitude, location.verticalAccuracy))
+                    StatsRow(title: "Motion", value: motionEmoji(for: locationManager.currentMotionType))
                 }
             }
             
@@ -550,10 +561,9 @@ struct StatsPanel: View {
             Divider()
                 .background(Color.white.opacity(0.5))
             
-            // Row 3: Buffer, Points Today, Files, Age
+            // Row 3: Buffer, Queue, Age
             HStack(spacing: 12) {
                 StatsRow(title: "Buffer", value: "\(fileManager.bufferSize)")
-                StatsRow(title: locationManager.pointsLabel, value: "\(locationManager.pointsLast24h)")
                 StatsRow(title: "Queue", value: "\(fileManager.queuedFiles)")
                 if let lastTime = fileManager.lastPointTime {
                     let timeSince = currentTime.timeIntervalSince(lastTime)
@@ -635,27 +645,15 @@ struct StatsPanel: View {
 
     
     private func formatTimeInterval(_ interval: TimeInterval) -> String {
-        // Handle negative or zero intervals
-        if interval <= 0 {
-            return "00:00"
-        }
-        
+        guard interval > 0 else { return "00h 00m" }
         let seconds = Int(interval)
-        let days = seconds / 86400
-        let hours = (seconds % 86400) / 3600
+        let days    = seconds / 86400
+        let hours   = (seconds % 86400) / 3600
         let minutes = (seconds % 3600) / 60
-        let remainingSeconds = seconds % 60
-        
         if days > 0 {
-            // Format: DD:HH:MM:SS
-            return String(format: "%d:%02d:%02d:%02d", days, hours, minutes, remainingSeconds)
-        } else if hours > 0 {
-            // Format: HH:MM:SS
-            return String(format: "%02d:%02d:%02d", hours, minutes, remainingSeconds)
-        } else {
-            // Format: MM:SS
-            return String(format: "%02d:%02d", minutes, remainingSeconds)
+            return String(format: "%dd %02dh %02dm", days, hours, minutes)
         }
+        return String(format: "%02dh %02dm", hours, minutes)
     }
 }
 

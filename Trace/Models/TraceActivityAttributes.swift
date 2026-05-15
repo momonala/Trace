@@ -11,7 +11,12 @@ public struct TraceWidgetsAttributes: ActivityAttributes {
         public var lastUpdate: Date
         public var lastHeartbeat: Date?
         public var isTracking: Bool
-        
+        public var steps: Int
+        public var kcal: Int
+        public var km: Double
+        public var flights: Int
+        public var healthAvailable: Bool
+
         public init(
             latitude: Double,
             longitude: Double,
@@ -20,7 +25,12 @@ public struct TraceWidgetsAttributes: ActivityAttributes {
             age: Int,
             lastUpdate: Date,
             lastHeartbeat: Date?,
-            isTracking: Bool
+            isTracking: Bool,
+            steps: Int = 0,
+            kcal: Int = 0,
+            km: Double = 0,
+            flights: Int = 0,
+            healthAvailable: Bool = false
         ) {
             self.latitude = latitude
             self.longitude = longitude
@@ -30,6 +40,11 @@ public struct TraceWidgetsAttributes: ActivityAttributes {
             self.lastUpdate = lastUpdate
             self.lastHeartbeat = lastHeartbeat
             self.isTracking = isTracking
+            self.steps = steps
+            self.kcal = kcal
+            self.km = km
+            self.flights = flights
+            self.healthAvailable = healthAvailable
         }
     }
 

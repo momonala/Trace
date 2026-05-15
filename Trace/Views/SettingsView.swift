@@ -146,10 +146,14 @@ struct SettingsView: View {
     }
 
     private func timeSinceLastUpload(_ date: Date) -> String {
-        let components = Calendar.current.dateComponents([.hour, .minute, .second], from: date, to: currentTime)
-        let hours = components.hour ?? 0
+        let components = Calendar.current.dateComponents([.day, .hour, .minute], from: date, to: currentTime)
+        let days    = components.day ?? 0
+        let hours   = components.hour ?? 0
         let minutes = components.minute ?? 0
-        return String(format: "%02d:%02d ago", hours, minutes)
+        if days > 0 {
+            return String(format: "%dd %02dh %02dm", days, hours, minutes)
+        }
+        return String(format: "%02dh %02dm", hours, minutes)
     }
 }
 
