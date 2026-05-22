@@ -103,7 +103,7 @@ final class GhostHighlightRenderer: MKOverlayRenderer {
 
 // Custom Map View
 struct MapView: UIViewRepresentable {
-    private static let logger = LoggerUtil(category: "mapView")
+    private static let logger = LoggerUtil(category: "MapView")
 
     @Binding var region: MKCoordinateRegion
     @Binding var isTrackingEnabled: Bool
@@ -177,10 +177,10 @@ struct MapView: UIViewRepresentable {
                 totalPoints += coordinates.count
             }
 
-            Self.logger.info("📍 Plotting \(totalPoints) points in \(validPathsCount) paths")
+            Self.logger.info("Plotting \(totalPoints) points in \(validPathsCount) paths")
 
             if !paths.isEmpty, validPathsCount == 0 {
-                Self.logger.info("⚠️ Received \(paths.count) paths, but none had enough points to render")
+                Self.logger.warning("Received \(paths.count) paths, but none had enough points to render")
             }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -343,6 +343,7 @@ struct ContentView: View {
     }
 
     private func uploadFiles() {
+        Task { await HealthSyncManager.shared.syncNow() }
         guard fileManager.queuedFiles > 0 else {
             showNoQueuedFilesInfo = true
             return
@@ -463,7 +464,8 @@ struct ContentView: View {
             Task {
                 async let health: Void = HealthManager.shared.refresh()
                 async let trail: Void = locationManager.refreshTodayPath()
-                _ = await (health, trail)
+                async let sync: Void = HealthSyncManager.shared.syncNow()
+                _ = await (health, trail, sync)
             }
         }
         // Add gesture recognizer to disable tracking when user interacts with map
@@ -503,6 +505,8 @@ struct StatsPanel: View {
     @State private var locationManager = LocationManager.shared
     @State private var fileManager = ServerAPIManager.shared
     @State private var healthManager = HealthManager.shared
+    @State private var healthSync = HealthSyncManager.shared
+    @State private var showHealthSyncSuccess = false
     @State private var currentTime = Date()
     @Binding var isLoadingCoordinates: Bool
     @Binding var isPlottingCoordinates: Bool
@@ -571,16 +575,17 @@ struct StatsPanel: View {
                 }
             }
 
-            // Row 4: Health (today's activity from HealthKit)
-            if healthManager.isAvailable {
+            // Row 4: Health — server summary when available, HealthKit fallback
+            if healthManager.isAvailable || fileManager.healthSummary != nil {
                 Divider()
                     .background(Color.white.opacity(0.5))
 
+                let s = fileManager.healthSummary
                 HStack(spacing: 12) {
-                    StatsRow(title: "Steps",   value: fmtSteps(healthManager.steps))
-                    StatsRow(title: "Kcal",    value: "\(healthManager.kcal)")
-                    StatsRow(title: "Km",      value: String(format: "%.1f", healthManager.km))
-                    StatsRow(title: "Flights", value: "\(healthManager.flights)")
+                    StatsRow(title: "Steps",   value: fmtSteps(s?.steps ?? healthManager.steps))
+                    StatsRow(title: "Kcal",    value: "\(s?.kcals.map { Int($0) } ?? healthManager.kcal)")
+                    StatsRow(title: "Km",      value: String(format: "%.1f", s?.km ?? healthManager.km))
+                    StatsRow(title: "Flights", value: "\(s?.flightsClimbed ?? healthManager.flights)")
                 }
             }
 
@@ -592,6 +597,15 @@ struct StatsPanel: View {
                         message: "No files queued for upload.",
                         color: .gray,
                         onDismiss: { showNoQueuedFilesInfo = false }
+                    )
+                }
+
+                if showHealthSyncSuccess {
+                    ErrorMessage(
+                        icon: "heart.fill",
+                        message: "\(healthSync.lastSyncSampleCount) health samples synced",
+                        color: .green,
+                        onDismiss: { showHealthSyncSuccess = false }
                     )
                 }
 
@@ -641,19 +655,25 @@ struct StatsPanel: View {
         .onReceive(timer) { now in
             currentTime = now
         }
+        .onChange(of: healthSync.lastSyncAt) { _, _ in
+            showNoQueuedFilesInfo = false
+            showHealthSyncSuccess = true
+            Task { await fileManager.fetchHealthSummary() }
+        }
     }
 
     
     private func formatTimeInterval(_ interval: TimeInterval) -> String {
-        guard interval > 0 else { return "00h 00m" }
-        let seconds = Int(interval)
-        let days    = seconds / 86400
-        let hours   = (seconds % 86400) / 3600
-        let minutes = (seconds % 3600) / 60
-        if days > 0 {
-            return String(format: "%dd %02dh %02dm", days, hours, minutes)
-        }
-        return String(format: "%02dh %02dm", hours, minutes)
+        guard interval > 0 else { return "0s" }
+        let total   = Int(interval)
+        let days    = total / 86400
+        let hours   = (total % 86400) / 3600
+        let minutes = (total % 3600) / 60
+        let secs    = total % 60
+        if days > 0    { return String(format: "%dd %02dh %02dm", days, hours, minutes) }
+        if hours > 0   { return String(format: "%02dh %02dm", hours, minutes) }
+        if minutes > 0 { return String(format: "%dm %02ds", minutes, secs) }
+        return "\(secs)s"
     }
 }
 
@@ -680,8 +700,10 @@ struct ErrorMessage: View {
         .cornerRadius(6)
         .transition(.opacity)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.3).delay(3)) {
-                onDismiss()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                withAnimation(.easeOut(duration: 0.3)) {
+                    onDismiss()
+                }
             }
         }
     }
@@ -722,13 +744,13 @@ struct StatsRow: View {
     let value: String
     var showTrackingStatus: Bool = false
     var isTracking: Bool = false
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption2)
                 .foregroundColor(.white.opacity(0.7))
-            HStack {
+            HStack(spacing: 4) {
                 Text(value)
                     .font(.callout)
                     .lineLimit(1)

@@ -9,7 +9,7 @@ import CoreData
 
 struct PersistenceController {
     static let shared = PersistenceController()
-    private static let logger = LoggerUtil(category: "persistenceController")
+    private static let logger = LoggerUtil(category: "PersistenceController")
 
     @MainActor
     static let preview: PersistenceController = {

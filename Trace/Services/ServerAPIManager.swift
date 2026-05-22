@@ -1,6 +1,32 @@
 import Foundation
 import CoreData
 
+enum HealthUploadError: Error, LocalizedError {
+    case clientError(Int)
+    case serverError(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .clientError(let code): return "Health upload client error: HTTP \(code)"
+        case .serverError(let code): return "Health upload server error: HTTP \(code)"
+        }
+    }
+}
+
+struct HealthSummary: Decodable {
+    let date: String
+    let steps: Int?
+    let kcals: Double?
+    let km: Double?
+    let flightsClimbed: Int?
+    let weight: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case date, steps, kcals, km, weight
+        case flightsClimbed = "flights_climbed"
+    }
+}
+
 struct LocationFeature: Encodable {
     struct Geometry: Encodable {
         let type = "Point"
@@ -33,7 +59,7 @@ struct LocationsPayload: Encodable {
 @MainActor
 class ServerAPIManager {
     static let shared = ServerAPIManager()
-    private static let logger = LoggerUtil(category: "serverAPIManager")
+    private static let logger = LoggerUtil(category: "ServerAPIManager")
 
     // API Configuration
     private static let baseURL = "https://trace.mnalavadi.org/"
@@ -42,9 +68,18 @@ class ServerAPIManager {
     private var apiEndpoint: String { "\(Self.baseURL)/dump" }
     private var statusEndpoint: String { "\(Self.baseURL)/status" }
     private var heartbeatEndpoint: String { "\(Self.baseURL)/heartbeat" }
+    private var healthDataEndpoint: String { "\(Self.baseURL)health-data" }
+    private var healthBatchEndpoint: String { "\(Self.baseURL)ios-dump" }
     var statusURL: URL { URL(string: statusEndpoint)! }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
 
+    private let jsonEncoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
+
+    var healthSummary: HealthSummary?
     var currentHourlyFile: HourlyFile?
     var queuedFiles: Int = 0
     var bufferSize: Int = 0
@@ -98,7 +133,7 @@ class ServerAPIManager {
             Task { [weak self] in
                 guard let self = self else { return }
                 if await self.queuedFiles > 0 {
-                    await Self.logger.info("🔄 Starting scheduled auto-upload")
+                    await Self.logger.info("Starting scheduled auto-upload")
                     await self.uploadAllFiles()
                 }
             }
@@ -106,14 +141,14 @@ class ServerAPIManager {
 
         Task {
             if queuedFiles > 0 {
-                Self.logger.info("🔄 Starting initial auto-upload")
+                Self.logger.info("Starting initial auto-upload")
                 await uploadAllFiles()
             }
         }
     }
 
     private func startHeartbeat() {
-        Self.logger.info("💓 Starting heartbeat timer")
+        Self.logger.info("Starting heartbeat timer")
         Task {
             await sendHeartbeat()
         }
@@ -143,15 +178,15 @@ class ServerAPIManager {
             }
 
             if (200...299).contains(httpResponse.statusCode) {
-                Self.logger.info("💓 Heartbeat sent successfully")
+                // Self.logger.info("💓 Heartbeat sent successfully")
                 Task { @MainActor in
                     LocationManager.shared.updateLastHeartbeatTimestamp(Date())
                 }
             } else {
-                Self.logger.warning("⚠️ Heartbeat failed with status: \(httpResponse.statusCode)")
+                Self.logger.warning("Heartbeat failed with status: \(httpResponse.statusCode)")
             }
         } catch {
-            Self.logger.error("❌ Heartbeat error: \(error.localizedDescription)")
+            Self.logger.error("Heartbeat error: \(error.localizedDescription)")
         }
     }
 
@@ -168,11 +203,11 @@ class ServerAPIManager {
             if let existingFile = try context.fetch(request).first {
                 currentHourlyFile = existingFile
                 await updateBufferSize()
-                Self.logger.info("📂 Using existing file for minute: \(String(describing: existingFile.fileName))")
+                Self.logger.info("Using existing file for minute: \(String(describing: existingFile.fileName))")
                 return
             }
         } catch {
-            Self.logger.error("❌ Error checking for existing file: \(String(describing: error.localizedDescription))")
+            Self.logger.error("Error checking for existing file: \(String(describing: error.localizedDescription))")
         }
 
         let hourlyFile = HourlyFile(context: context)
@@ -188,7 +223,7 @@ class ServerAPIManager {
             queuedFiles += 1
             bufferSize = 0
         } catch {
-            Self.logger.error("❌ Error creating minute file: \(String(describing: error.localizedDescription))")
+            Self.logger.error("Error creating minute file: \(String(describing: error.localizedDescription))")
         }
     }
 
@@ -241,7 +276,7 @@ class ServerAPIManager {
         uploadError = nil
         defer { isUploading = false }
 
-        Self.logger.info("📤 Starting upload of completed files")
+        Self.logger.info("Starting upload of completed files")
 
         let context = PersistenceController.shared.container.viewContext
         let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
@@ -254,10 +289,10 @@ class ServerAPIManager {
 
         do {
             let filesToUpload = try context.fetch(request)
-            Self.logger.info("📦 Found \(String(describing: filesToUpload.count)) files with points to upload")
+            Self.logger.info("Found \(String(describing: filesToUpload.count)) files with points to upload")
 
             if filesToUpload.isEmpty {
-                Self.logger.info("ℹ️ No files to upload")
+                Self.logger.info("No files to upload")
                 return
             }
 
@@ -284,16 +319,59 @@ class ServerAPIManager {
             }
 
             if !hadError {
-                Self.logger.info("✅ Successfully processed all files")
+                Self.logger.info("Successfully processed all files")
                 lastUploadAttempt = Date()
             }
         } catch {
-            Self.logger.error("❌ Error during upload: \(String(describing: error.localizedDescription))")
+            Self.logger.error("Error during upload: \(String(describing: error.localizedDescription))")
             uploadError = NSError(
                 domain: "com.trace",
                 code: 500,
                 userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 500"]
             )
+        }
+    }
+
+    func uploadHealthBatch(_ payload: HealthBatchPayload) async throws {
+        guard let url = URL(string: healthBatchEndpoint) else { return }
+        let data = try jsonEncoder.encode(payload)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+
+        do {
+            try await performHealthBatchRequest(request)
+        } catch HealthUploadError.serverError {
+            Self.logger.warning("Health upload server error, retrying once")
+            try await performHealthBatchRequest(request)
+        } catch is URLError {
+            Self.logger.warning("Health upload transport error, retrying once")
+            try await performHealthBatchRequest(request)
+        }
+    }
+
+    private func performHealthBatchRequest(_ request: URLRequest) async throws {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw HealthUploadError.serverError(502)
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw http.statusCode >= 500
+                ? HealthUploadError.serverError(http.statusCode)
+                : HealthUploadError.clientError(http.statusCode)
+        }
+    }
+
+    func fetchHealthSummary(for date: String = "today") async {
+        guard let url = URL(string: "\(healthDataEndpoint)?date=\(date)") else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            healthSummary = try JSONDecoder().decode(HealthSummary.self, from: data)
+            Self.logger.info("Health summary fetched for \(date)")
+        } catch {
+            Self.logger.error("Failed to fetch health summary: \(error.localizedDescription)")
         }
     }
 
@@ -304,7 +382,7 @@ class ServerAPIManager {
 
         let points = file.points?.allObjects as? [LocationPoint] ?? []
         if points.isEmpty {
-            Self.logger.info("⚠️ Skipping file with no points")
+            Self.logger.warning("Skipping file with no points")
             return nil
         }
 
@@ -327,10 +405,8 @@ class ServerAPIManager {
         }
 
         let payload = LocationsPayload(locations: locationFeatures)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
 
-        guard let jsonData = try? encoder.encode(payload) else {
+        guard let jsonData = try? jsonEncoder.encode(payload) else {
             return NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
         }
 

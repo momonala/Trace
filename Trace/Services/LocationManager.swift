@@ -35,7 +35,7 @@ struct MapBoundingBox {
 @MainActor
 class LocationManager: NSObject {
     static let shared = LocationManager()
-    private static let logger = LoggerUtil(category: "locationManager")
+    private static let logger = LoggerUtil(category: "LocationManager")
 
     private let locationManager = CLLocationManager()
     private let motionManager = CMMotionActivityManager()
@@ -112,7 +112,7 @@ class LocationManager: NSObject {
 
         // Start with significant location changes
         switchToSignificantLocationChanges()
-        Self.logger.info("⏳ Started with significant location changes...")
+        Self.logger.info("Started with significant location changes...")
 
         // End any orphaned activities from previous sessions before starting a new one
         Task {
@@ -146,9 +146,9 @@ class LocationManager: NSObject {
             todayPath = payload.paths.map { seg in
                 seg.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
             }
-            Self.logger.info("🗺️ Today path loaded: \(payload.count) points")
+            Self.logger.info("Today path loaded: \(payload.count) points")
         } catch {
-            Self.logger.error("❌ Today path refresh failed: \(error.localizedDescription)")
+            Self.logger.error("Today path refresh failed: \(error.localizedDescription)")
         }
     }
 
@@ -199,7 +199,7 @@ class LocationManager: NSObject {
 
         guard let url = URL(string: "\(fileManager.serverBaseURL)/coordinates") else {
             let error = NSError(domain: "com.trace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
-            Self.logger.error("❌ \(error.localizedDescription)")
+            Self.logger.error("\(error.localizedDescription)")
             mapRefreshError = error
             return
         }
@@ -209,7 +209,7 @@ class LocationManager: NSObject {
 
         guard let finalURL = urlComponents?.url else {
             let error = NSError(domain: "com.trace", code: 2, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
-            Self.logger.error("❌ \(error.localizedDescription)")
+            Self.logger.error("\(error.localizedDescription)")
             mapRefreshError = error
             return
         }
@@ -219,14 +219,14 @@ class LocationManager: NSObject {
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 let error = NSError(domain: "com.trace", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid server response"])
-                Self.logger.error("❌ \(error.localizedDescription)")
+                Self.logger.error("\(error.localizedDescription)")
                 mapRefreshError = error
                 return
             }
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let error = NSError(domain: "com.trace", code: 4, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP \(httpResponse.statusCode)"])
-                Self.logger.error("❌ \(error.localizedDescription)")
+                Self.logger.error("\(error.localizedDescription)")
                 mapRefreshError = error
                 return
             }
@@ -236,7 +236,7 @@ class LocationManager: NSObject {
 
             if payload.status != "success" {
                 let error = NSError(domain: "com.trace", code: 6, userInfo: [NSLocalizedDescriptionKey: "Server returned error status"])
-                Self.logger.error("❌ \(error.localizedDescription)")
+                Self.logger.error("\(error.localizedDescription)")
                 mapRefreshError = error
                 return
             }
@@ -247,10 +247,10 @@ class LocationManager: NSObject {
                 ? "region"
                 : "lookback: \(payload.lookbackHours.map { "\($0)h" } ?? "?")"
             Self.logger.info(
-                "📍 Loaded \(payload.count) points across \(payload.paths.count) paths from API (\(modeDescription))"
+                "Loaded \(payload.count) points across \(payload.paths.count) paths from API (\(modeDescription))"
             )
         } catch {
-            Self.logger.error("❌ Map refresh failed: \(error.localizedDescription)")
+            Self.logger.error("Map refresh failed: \(error.localizedDescription)")
             mapRefreshError = error
         }
     }
@@ -281,7 +281,7 @@ class LocationManager: NSObject {
         if shouldTrack {
             if requiredMotionSeconds == 0 {
                 switchToContinuousUpdates()
-                Self.logger.info("🏃‍♂️ Motion detected (\(motionType)), starting updates immediately")
+                Self.logger.info("Motion detected (\(motionType)), starting updates immediately")
             } else {
                 startStateTimer(targetState: .motion, currentState: motionType)
             }
@@ -289,7 +289,7 @@ class LocationManager: NSObject {
             if requiredMotionSeconds == 0 {
                 stopMotionTimer()
                 switchToSignificantLocationChanges()
-                Self.logger.info("🛑 Motion stopped (\(motionType)), switching to significant changes")
+                Self.logger.info("Motion stopped (\(motionType)), switching to significant changes")
             } else {
                 startStateTimer(targetState: .stationary, currentState: motionType)
             }
@@ -317,10 +317,10 @@ class LocationManager: NSObject {
                     switch targetState {
                     case .motion:
                         self.switchToContinuousUpdates()
-                        Self.logger.info("🏃‍♂️ Motion (\(currentState)) sustained for \(Int(duration))s, starting updates")
+                        Self.logger.info("Motion (\(currentState)) sustained for \(Int(duration))s, starting updates")
                     case .stationary:
                         self.switchToSignificantLocationChanges()
-                        Self.logger.info("🛑 Stationary sustained for \(Int(duration))s, switching to significant changes")
+                        Self.logger.info("Stationary sustained for \(Int(duration))s, switching to significant changes")
                     }
                 }
             }
@@ -328,9 +328,9 @@ class LocationManager: NSObject {
 
         switch targetState {
         case .motion:
-            Self.logger.info("⏳ Motion detected (\(currentState)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
+            Self.logger.info("Motion detected (\(currentState)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
         case .stationary:
-            Self.logger.info("⏳ Stationary detected, waiting \(Int(self.requiredMotionSeconds))s before stopping")
+            Self.logger.info("Stationary detected, waiting \(Int(self.requiredMotionSeconds))s before stopping")
         }
     }
 
@@ -361,7 +361,7 @@ class LocationManager: NSObject {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         if manager.authorizationStatus == .authorizedAlways {
             locationManager.allowsBackgroundLocationUpdates = true
-            Self.logger.info("✅ Location access granted with background updates enabled")
+            Self.logger.info("Location access granted with background updates enabled")
         }
     }
 
@@ -370,13 +370,13 @@ class LocationManager: NSObject {
     private func endAllOrphanedLiveActivities() async {
         for activity in Activity<TraceWidgetsAttributes>.activities {
             await activity.end(nil, dismissalPolicy: .immediate)
-            Self.logger.info("🧹 Ended orphaned Live Activity: \(activity.id)")
+            Self.logger.info("Ended orphaned Live Activity: \(activity.id)")
         }
     }
 
     private func startLiveActivity() {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            Self.logger.info("❌ Live Activities are not enabled")
+            Self.logger.warning("Live Activities are not enabled")
             return
         }
 
@@ -389,9 +389,9 @@ class LocationManager: NSObject {
                 content: ActivityContent(state: contentState, staleDate: nil),
                 pushType: nil
             )
-            Self.logger.info("✅ Started Live Activity")
+            Self.logger.info("Started Live Activity")
         } catch {
-            Self.logger.error("❌ Failed to start Live Activity: \(error.localizedDescription)")
+            Self.logger.error("Failed to start Live Activity: \(error.localizedDescription)")
         }
     }
 
@@ -421,7 +421,7 @@ class LocationManager: NSObject {
 
         Task {
             await activity.update(ActivityContent(state: contentState, staleDate: nil), alertConfiguration: nil)
-            Self.logger.info("📍 Updated Live Activity")
+            // Self.logger.info("📍 Updated Live Activity")
         }
     }
 
@@ -431,7 +431,7 @@ class LocationManager: NSObject {
         Task {
             await activity.end(nil, dismissalPolicy: .immediate)
             liveActivity = nil
-            Self.logger.info("✅ Ended Live Activity")
+            Self.logger.info("Ended Live Activity")
         }
     }
 
@@ -489,14 +489,14 @@ extension LocationManager: @preconcurrency CLLocationManagerDelegate {
                 }
                 await fileManager.pointAdded()
             } catch {
-                Self.logger.error("❌ Error saving location: \(String(describing: error))")
+                Self.logger.error("Error saving location: \(String(describing: error))")
             }
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         self.error = error
-        Self.logger.error("❌ Location manager error: \(error.localizedDescription)")
+        Self.logger.error("Location manager error: \(error.localizedDescription)")
         updateLiveActivity()
     }
 }

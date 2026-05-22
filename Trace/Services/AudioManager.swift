@@ -5,7 +5,7 @@ import UIKit
 /// Manages audio playback to keep app alive in background
 class AudioManager {
     static let shared = AudioManager()
-    private static let logger = LoggerUtil(category: "audioManager")
+    private static let logger = LoggerUtil(category: "AudioManager")
     
     private var audioPlayer: AVAudioPlayer?
     private var isInBackground = false
@@ -22,7 +22,7 @@ class AudioManager {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default)
             try session.setActive(true)
-            Self.logger.info("✅ Audio session setup complete")
+            Self.logger.info("Audio session setup complete")
         } catch {
             Self.logger.error("Failed to set up audio session: \(error.localizedDescription)")
         }
@@ -96,7 +96,7 @@ class AudioManager {
             audioPlayer = try AVAudioPlayer(contentsOf: tempURL)
             audioPlayer?.numberOfLoops = -1  // Loop indefinitely
             audioPlayer?.volume = volume
-            Self.logger.info("✅ Audio player setup complete")
+            Self.logger.info("Audio player setup complete")
         } catch {
             Self.logger.error("Failed to create audio player: \(error.localizedDescription)")
         }
@@ -119,13 +119,13 @@ class AudioManager {
     }
     
     @objc private func handleAppDidEnterBackground() {
-        Self.logger.info("🌚 App entered background mode")
+        Self.logger.info("App entered background mode")
         isInBackground = true
         startPlayingInBackground()
     }
     
     @objc private func handleAppWillEnterForeground() {
-        Self.logger.info("🌞 App entering foreground mode")
+        Self.logger.info("App entering foreground mode")
         isInBackground = false
         stopPlayingInBackground()
     }
@@ -137,12 +137,12 @@ class AudioManager {
         }
         
         audioPlayer?.play()
-        Self.logger.info("🎵 Started continuous background audio")
+        Self.logger.info("Started continuous background audio")
     }
     
     func stopPlayingInBackground() {
         audioPlayer?.stop()
-        Self.logger.info("🛑 Stopped background audio")
+        Self.logger.info("Stopped background audio")
     }
     
     deinit {

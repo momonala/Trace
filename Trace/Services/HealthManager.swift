@@ -5,6 +5,7 @@ import HealthKit
 @MainActor
 class HealthManager {
     static let shared = HealthManager()
+    private static let logger = LoggerUtil(category: "HealthManager")
 
     var steps: Int = 0
     var kcal: Int = 0
@@ -13,23 +14,17 @@ class HealthManager {
     var isAvailable: Bool = false
 
     private let store = HKHealthStore()
-    private let readTypes: Set<HKObjectType> = [
-        HKQuantityType(.stepCount),
-        HKQuantityType(.activeEnergyBurned),
-        HKQuantityType(.distanceWalkingRunning),
-        HKQuantityType(.flightsClimbed),
-    ]
 
     private init() {}
 
     func requestPermissionsAndLoad() async {
         guard HKHealthStore.isHealthDataAvailable() else { return }
         do {
-            try await store.requestAuthorization(toShare: [], read: readTypes)
+            try await store.requestAuthorization(toShare: [], read: HealthKitExportType.readTypes)
             isAvailable = true
             await refresh()
         } catch {
-            // Permission denied or health data unavailable
+            Self.logger.error("HealthKit authorization failed: \(error.localizedDescription)")
         }
     }
 
@@ -39,10 +34,10 @@ class HealthManager {
         let startOfDay = Calendar.current.startOfDay(for: now)
         let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: now)
 
-        async let stepsVal  = querySum(type: HKQuantityType(.stepCount),              unit: .count(),              predicate: predicate)
-        async let kcalVal   = querySum(type: HKQuantityType(.activeEnergyBurned),     unit: .kilocalorie(),        predicate: predicate)
-        async let kmVal     = querySum(type: HKQuantityType(.distanceWalkingRunning), unit: .meterUnit(with: .kilo), predicate: predicate)
-        async let flightsVal = querySum(type: HKQuantityType(.flightsClimbed),        unit: .count(),              predicate: predicate)
+        async let stepsVal   = querySum(type: HKQuantityType(.stepCount),              unit: .count(),               predicate: predicate)
+        async let kcalVal    = querySum(type: HKQuantityType(.activeEnergyBurned),     unit: .kilocalorie(),         predicate: predicate)
+        async let kmVal      = querySum(type: HKQuantityType(.distanceWalkingRunning), unit: .meterUnit(with: .kilo), predicate: predicate)
+        async let flightsVal = querySum(type: HKQuantityType(.flightsClimbed),        unit: .count(),               predicate: predicate)
 
         let (s, k, d, f) = await (stepsVal, kcalVal, kmVal, flightsVal)
         steps   = Int(s)

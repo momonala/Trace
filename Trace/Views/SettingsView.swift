@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable private var fileManager = ServerAPIManager.shared
     @Bindable private var locationManager = LocationManager.shared
+    @State private var healthSync = HealthSyncManager.shared
     @State private var showingAlert = false
     @State private var alertMessage = ""
     @State private var isTestingAPI = false
@@ -81,6 +82,22 @@ struct SettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+
+                    HStack {
+                        Text("Last Health Sync")
+                        Spacer()
+                        if let lastSync = healthSync.lastSyncAt {
+                            Text(lastSync.formatted(date: .numeric, time: .shortened))
+                                .font(.system(.caption, design: .monospaced))
+                            Text("(\(timeSinceLastUpload(lastSync)))")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        } else {
+                            Text("Never")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
 
                 Section(header: Text("Server Settings")) {
@@ -155,6 +172,8 @@ struct SettingsView: View {
         }
         return String(format: "%02dh %02dm", hours, minutes)
     }
+
+
 }
 
 #Preview {
