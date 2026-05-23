@@ -32,7 +32,9 @@ When historical data is loaded via "Refresh Map", the server paths render as a s
 
 ### HealthKit Stats
 
-The stats panel shows today's step count, active calories, walking/running distance, and flights climbed — pulled directly from HealthKit once per minute. No server involvement.
+The stats panel shows today's step count, active calories, walking/running distance, and flights climbed. Values come from HealthKit locally (refreshed on foreground and every 10 minutes) and from the server's `/health-data` summary after a successful upload.
+
+Health data is pushed to `/ios-dump` on app foreground, when tapping upload (with a success toast), and automatically every 10 minutes via `HealthSyncManager`. Each scheduled run also refreshes local HealthKit totals and re-fetches the server summary.
 
 ### Motion Stats
 
@@ -75,7 +77,8 @@ The app is built around three singleton service classes, all using Swift's `@Obs
 
 - **`LocationManager`** — Owns the CoreMotion and CoreLocation pipelines. Manages the motion state machine, filters points by accuracy, writes `LocationPoint` records to CoreData on a background context, fetches today's ghost trail path from the server on foreground, and manages the Live Activity lifecycle.
 - **`ServerAPIManager`** — Owns the upload queue. Creates per-minute `HourlyFile` batches, manages the auto-upload timer, and sends heartbeats to the server.
-- **`HealthManager`** — Queries HealthKit for today's step count, calories, distance, and flights. Refreshed once per minute.
+- **`HealthManager`** — Queries HealthKit for today's step count, calories, distance, and flights (foreground + 10-minute timer).
+- **`HealthSyncManager`** — Uploads raw HealthKit samples to `/ios-dump` on foreground, manual upload, and every 10 minutes; pulls `/health-data` after each scheduled run.
 - **`AudioManager`** — Generates and loops a silent WAV file to hold the audio background mode.
 
 Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persisted to `UserDefaults` via `didSet` and restored on launch.
@@ -87,6 +90,7 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 | `LocationManager.swift` | Motion detection, GPS pipeline, today's ghost trail fetch, Live Activity |
 | `ServerAPIManager.swift` | Upload queue, per-minute file batching, heartbeat |
 | `HealthManager.swift` | HealthKit queries for daily activity stats |
+| `HealthSyncManager.swift` | Health sample batch upload and 10-minute sync timer |
 | `AudioManager.swift` | Silent background audio keep-alive |
 | `Persistence.swift` | CoreData stack (`LocationPoint`, `HourlyFile`) |
 | `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight), stats panel, motion-stats overlay |

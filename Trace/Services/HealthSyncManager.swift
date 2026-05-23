@@ -3,29 +3,53 @@ import HealthKit
 
 /// Fetches all of today's raw HealthKit samples for the four tracked quantity types
 /// and POSTs them as a single batch to /ios-dump.
-/// Triggered on foreground and on manual upload; no background timer.
+/// Triggered on foreground, manual upload, and a 10-minute background timer.
 @Observable
 @MainActor
 class HealthSyncManager {
     static let shared = HealthSyncManager()
     private static let logger = LoggerUtil(category: "HealthSyncManager")
     private static let batchIndexKey = "healthSyncBatchIndex"
+    private static let autoSyncIntervalSeconds: TimeInterval = 10 * 60
 
     var lastSyncAt: Date?
+    /// When true, UI may show a success toast for the sync that just updated `lastSyncAt`.
+    var announceNextSync = false
     /// Sample count from the most recent successful upload; used by the success toast.
     var lastSyncSampleCount: Int = 0
 
     private let store = HKHealthStore()
     private var isSyncing = false
+    private var autoSyncTimer: Timer?
 
     private var batchIndex: Int {
         get { UserDefaults.standard.integer(forKey: Self.batchIndexKey) }
         set { UserDefaults.standard.set(newValue, forKey: Self.batchIndexKey) }
     }
 
-    private init() {}
+    private init() {
+        startAutoSyncTimer()
+    }
 
-    func syncNow() async {
+    private func startAutoSyncTimer() {
+        autoSyncTimer?.invalidate()
+        autoSyncTimer = Timer.scheduledTimer(withTimeInterval: Self.autoSyncIntervalSeconds, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.performPeriodicHealthUpdate()
+            }
+        }
+    }
+
+    /// Refreshes local HealthKit totals, uploads today's samples, and pulls the server summary.
+    private func performPeriodicHealthUpdate() async {
+        Self.logger.info("Starting scheduled health sync (every 10m)")
+        async let local: Void = HealthManager.shared.refresh()
+        async let upload: Void = syncNow(announce: false)
+        _ = await (local, upload)
+        await ServerAPIManager.shared.fetchHealthSummary()
+    }
+
+    func syncNow(announce: Bool = false) async {
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
@@ -56,6 +80,7 @@ class HealthSyncManager {
 
             batchIndex += 1
             lastSyncSampleCount = allSamples.count
+            announceNextSync = announce
             lastSyncAt = now
             Self.logger.info("Health sync complete — batch \(completedIndex)")
         } catch {

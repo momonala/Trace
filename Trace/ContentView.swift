@@ -347,7 +347,7 @@ struct ContentView: View {
     }
 
     private func uploadFiles() {
-        Task { await HealthSyncManager.shared.syncNow() }
+        Task { await HealthSyncManager.shared.syncNow(announce: true) }
         guard fileManager.queuedFiles > 0 else {
             showNoQueuedFilesInfo = true
             return
@@ -806,7 +806,10 @@ struct StatsPanel: View {
         }
         .onChange(of: healthSync.lastSyncAt) { _, _ in
             showNoQueuedFilesInfo = false
-            showHealthSyncSuccess = true
+            if healthSync.announceNextSync {
+                showHealthSyncSuccess = true
+                healthSync.announceNextSync = false
+            }
             Task { await fileManager.fetchHealthSummary() }
         }
     }
