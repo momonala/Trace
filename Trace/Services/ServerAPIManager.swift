@@ -27,6 +27,38 @@ struct HealthSummary: Decodable {
     }
 }
 
+struct MotionStats: Decodable {
+    struct MotionTypeBreakdown: Decodable {
+        let distanceKm: Double
+        let timeSeconds: Double
+
+        enum CodingKeys: String, CodingKey {
+            case distanceKm = "distance_km"
+            case timeSeconds = "time_seconds"
+        }
+    }
+
+    let date: String
+    let totalKm: Double
+    let maxSpeedMS: Double
+    let avgSpeedMS: Double
+    let timeSpentSeconds: Double
+    let altitudeAscendedM: Double
+    let altitudeDescendedM: Double
+    let motionType: [String: MotionTypeBreakdown]
+
+    enum CodingKeys: String, CodingKey {
+        case date
+        case totalKm = "total_km"
+        case maxSpeedMS = "max_speed_m_s"
+        case avgSpeedMS = "avg_speed_m_s"
+        case timeSpentSeconds = "time_spent_seconds"
+        case altitudeAscendedM = "altitude_ascended_m"
+        case altitudeDescendedM = "altitude_descended_m"
+        case motionType = "motion_type"
+    }
+}
+
 struct LocationFeature: Encodable {
     struct Geometry: Encodable {
         let type = "Point"
@@ -70,6 +102,7 @@ class ServerAPIManager {
     private var heartbeatEndpoint: String { "\(Self.baseURL)/heartbeat" }
     private var healthDataEndpoint: String { "\(Self.baseURL)health-data" }
     private var healthBatchEndpoint: String { "\(Self.baseURL)ios-dump" }
+    private var motionStatsEndpoint: String { "\(Self.baseURL)motion-stats" }
     var statusURL: URL { URL(string: statusEndpoint)! }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
 
@@ -373,6 +406,24 @@ class ServerAPIManager {
         } catch {
             Self.logger.error("Failed to fetch health summary: \(error.localizedDescription)")
         }
+    }
+
+    func fetchMotionStats(for date: String = "today") async throws -> MotionStats {
+        guard let url = URL(string: "\(motionStatsEndpoint)?date=\(date)") else {
+            throw URLError(.badURL)
+        }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(
+                domain: "com.trace",
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "Motion stats request failed (HTTP \(code))"]
+            )
+        }
+        let stats = try JSONDecoder().decode(MotionStats.self, from: data)
+        Self.logger.info("Motion stats fetched for \(stats.date)")
+        return stats
     }
 
     private func uploadFile(_ file: HourlyFile) async -> Error? {

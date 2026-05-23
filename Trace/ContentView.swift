@@ -289,6 +289,10 @@ struct ContentView: View {
     @State private var showUploadError = false
     @State private var showRefreshError = false
     @State private var showNoQueuedFilesInfo = false
+    @State private var showMotionStatsOverlay = false
+    @State private var motionStats: MotionStats?
+    @State private var motionStatsError: String?
+    @State private var isLoadingMotionStats = false
 
     private let fabColumnTopOffset = UIScreen.main.bounds.height * 0.41
 
@@ -354,6 +358,21 @@ struct ContentView: View {
         }
     }
 
+    private func showMotionStats() {
+        showMotionStatsOverlay = true
+        motionStats = nil
+        motionStatsError = nil
+        isLoadingMotionStats = true
+        Task {
+            defer { isLoadingMotionStats = false }
+            do {
+                motionStats = try await fileManager.fetchMotionStats(for: "today")
+            } catch {
+                motionStatsError = error.localizedDescription
+            }
+        }
+    }
+
     var body: some View {
         TabView(selection: $selectedTab) {
             // Live View Tab with Daily Path
@@ -416,12 +435,33 @@ struct ContentView: View {
                                 }
                             }
                             .disabled(isLoadingCoordinates || isPlottingCoordinates)
+
+                            Button(action: showMotionStats) {
+                                MapFloatingButton(isBusy: isLoadingMotionStats) {
+                                    Image(systemName: "figure.walk.motion")
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .disabled(isLoadingMotionStats)
                         }
                         .padding(.trailing)
                     }
                     Spacer()
                 }
                 .edgesIgnoringSafeArea(.bottom)
+
+                if showMotionStatsOverlay {
+                    MotionStatsOverlay(
+                        stats: motionStats,
+                        isLoading: isLoadingMotionStats,
+                        errorMessage: motionStatsError,
+                        onDismiss: {
+                            showMotionStatsOverlay = false
+                            motionStats = nil
+                            motionStatsError = nil
+                        }
+                    )
+                }
             }
             .tabItem {
                 Label("Live", systemImage: "location.fill")
@@ -481,6 +521,126 @@ struct ContentView: View {
     
 }
 
+private struct MotionStatsOverlay: View {
+    let stats: MotionStats?
+    let isLoading: Bool
+    let errorMessage: String?
+    let onDismiss: () -> Void
+
+    private func formatDurationHMS(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        return String(format: "%02d:%02d:%02d", h, m, s)
+    }
+
+    private func formatSpeedKmh(_ metersPerSecond: Double) -> String {
+        String(format: "%.1f", metersPerSecond * 3.6)
+    }
+
+    private var sortedMotionTypes: [(String, MotionStats.MotionTypeBreakdown)] {
+        guard let stats else { return [] }
+        return stats.motionType
+            .filter { $0.value.distanceKm > 0 || $0.value.timeSeconds > 0 }
+            .sorted { lhs, rhs in
+                if lhs.value.timeSeconds != rhs.value.timeSeconds {
+                    return lhs.value.timeSeconds > rhs.value.timeSeconds
+                }
+                return MotionTypeDisplay.sortIndex(for: lhs.key) < MotionTypeDisplay.sortIndex(for: rhs.key)
+            }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onDismiss)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Today's motion")
+                        .font(.headline)
+                    Spacer()
+                    if let stats {
+                        Text(stats.date)
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                }
+
+                if isLoading {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        Spacer()
+                    }
+                    .padding(.vertical, 24)
+                } else if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                } else if let stats {
+                    HStack(spacing: 16) {
+                        overlayMetric(title: "Distance", value: String(format: "%.2f km", stats.totalKm))
+                        overlayMetric(title: "Active time", value: formatDurationHMS(stats.timeSpentSeconds))
+                    }
+                    HStack(spacing: 16) {
+                        overlayMetric(title: "Max speed", value: "\(formatSpeedKmh(stats.maxSpeedMS)) km/h")
+                        overlayMetric(title: "Avg speed", value: "\(formatSpeedKmh(stats.avgSpeedMS)) km/h")
+                    }
+                    HStack(spacing: 16) {
+                        overlayMetric(title: "Ascended", value: String(format: "%.0f m", stats.altitudeAscendedM))
+                        overlayMetric(title: "Descended", value: String(format: "%.0f m", stats.altitudeDescendedM))
+                    }
+
+                    if !sortedMotionTypes.isEmpty {
+                        Divider()
+                            .background(Color.white.opacity(0.4))
+
+                        Text("By activity")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+
+                        ForEach(sortedMotionTypes, id: \.0) { type, breakdown in
+                            HStack(spacing: 8) {
+                                Text(MotionTypeDisplay.emoji(for: type))
+                                Text(MotionTypeDisplay.label(for: type))
+                                    .font(.callout)
+                                Spacer()
+                                Text(String(format: "%.2f km", breakdown.distanceKm))
+                                    .font(.callout)
+                                Text(formatDurationHMS(breakdown.timeSeconds))
+                                    .font(.callout.monospacedDigit())
+                                    .foregroundColor(.white.opacity(0.85))
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: 360)
+            .background(Color.black.opacity(0.7))
+            .foregroundColor(.white)
+            .cornerRadius(10)
+            .padding(.horizontal, 24)
+            .onTapGesture { }
+        }
+    }
+
+    private func overlayMetric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.white.opacity(0.65))
+            Text(value)
+                .font(.callout)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct MapFloatingButton<Content: View>: View {
     let isBusy: Bool
     @ViewBuilder let content: () -> Content
@@ -519,17 +679,6 @@ struct StatsPanel: View {
         count >= 1000 ? String(format: "%.1fk", Double(count) / 1000) : "\(count)"
     }
 
-    private func motionEmoji(for type: String) -> String {
-        switch type {
-        case "walking":    return "🚶🏽"
-        case "running":    return "👟"
-        case "cycling":    return "🚲"
-        case "automotive": return "🚗"
-        case "stationary": return "🐒"
-        default:           return "❓"
-        }
-    }
-
     private func formatCoordinates(_ location: CLLocation) -> String {
         let coords = String(format: "%.5f, %.5f", location.coordinate.latitude, location.coordinate.longitude)
         let accuracy = String(format: " ± %.0f", location.horizontalAccuracy)
@@ -557,7 +706,7 @@ struct StatsPanel: View {
                     StatsRow(title: "Speed (km/h)", value: String(format: "%.1f", location.speed * 3.6))
                     StatsRow(title: "Altitude (m)",
                             value: String(format: "%.0f ± %.0f", location.altitude, location.verticalAccuracy))
-                    StatsRow(title: "Motion", value: motionEmoji(for: locationManager.currentMotionType))
+                    StatsRow(title: "Motion", value: MotionTypeDisplay.emoji(for: locationManager.currentMotionType))
                 }
             }
             

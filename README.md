@@ -34,6 +34,24 @@ When historical data is loaded via "Refresh Map", the server paths render as a s
 
 The stats panel shows today's step count, active calories, walking/running distance, and flights climbed — pulled directly from HealthKit once per minute. No server involvement.
 
+### Motion Stats
+
+A floating **motion stats** button on the Live map (below refresh) fetches today's aggregated GPS activity from the server's `/motion-stats` endpoint and shows it in a dismissible overlay. Tap outside the card to close.
+
+Displayed units:
+
+| Field | Display |
+|---|---|
+| Distance | km |
+| Active time | `HH:MM:SS` |
+| Max / avg speed | km/h (converted from m/s) |
+| Altitude gain / loss | m |
+| Per-activity breakdown | km and `HH:MM:SS` per motion type |
+
+Motion types match CoreMotion and upload payloads: `automotive`, `cycling`, `running`, `walking`, `stationary`, and `unknown`. Each has a consistent emoji in the live stats panel and in the overlay breakdown (`MotionTypeDisplay` in `Trace/Utils/MotionTypeDisplay.swift`).
+
+The server aggregates non-stationary GPS points for the requested calendar day; `stationary` may appear in breakdowns when present in stored data. Types with zero distance and zero time are hidden in the overlay.
+
 ### Live Activity
 
 A Lock Screen and Dynamic Island widget shows tracking status, the last GPS fix time, and the last server heartbeat — updated on each location fix. It's implemented as a separate extension target using ActivityKit.
@@ -71,7 +89,8 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 | `HealthManager.swift` | HealthKit queries for daily activity stats |
 | `AudioManager.swift` | Silent background audio keep-alive |
 | `Persistence.swift` | CoreData stack (`LocationPoint`, `HourlyFile`) |
-| `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight) and stats panel |
+| `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight), stats panel, motion-stats overlay |
+| `MotionTypeDisplay.swift` | Shared motion-type emoji, labels, and sort order for stats UI |
 | `SettingsView.swift` | Configuration UI |
 | `TraceActivityAttributes.swift` | Live Activity data model |
 | `TraceWidgetsLiveActivity.swift` | Lock Screen and Dynamic Island widget UI |
@@ -111,6 +130,7 @@ graph LR
         DUMP["POST /dump"]
         HBE["POST /heartbeat"]
         COORD["GET /coordinates"]
+        MSTATS["GET /motion-stats"]
         FS[("GeoJSON Files\nYYYY/MM/DD/HH/")]
         DP["Douglas–Peucker\nSimplification (5m)"]
         WD["Watchdog Thread"]
@@ -127,6 +147,7 @@ graph LR
     BATCH -- "POST /dump every 60s" --> DUMP
     HBT -- "POST /heartbeat" --> HBE
     MV -- "GET /coordinates?lookback_hours=N" --> COORD
+    MV -- "GET /motion-stats?date=today" --> MSTATS
     DP -- "segmented trip paths" --> MV
 ```
 
@@ -153,6 +174,8 @@ Uploads use Overland's GeoJSON feature format:
     }
 }
 ```
+
+`properties.motion` is a one-element array with one of: `automotive`, `cycling`, `running`, `walking`, `stationary`, `unknown` (same strings CoreMotion maps to in `LocationManager`).
 
 ---
 
@@ -202,6 +225,35 @@ POST /heartbeat
 ```
 
 Resets the watchdog timer. Alerts fire via Telegram if this goes missing for more than 60 seconds.
+
+#### Daily motion stats
+```http
+GET /motion-stats?date=2025-01-01
+GET /motion-stats?date=today
+```
+
+Aggregates non-stationary GPS points from `geo_data.db` for the given calendar day (`today` = local date). Distance and time use haversine segments between consecutive readings; altitude gain/loss sums positive/negative deltas; speeds use per-row Overland values (m/s).
+
+```json
+{
+  "date": "2025-01-01",
+  "total_km": 12.5,
+  "max_speed_m_s": 20.0,
+  "avg_speed_m_s": 5.0,
+  "time_spent_seconds": 3600.0,
+  "altitude_ascended_m": 150.0,
+  "altitude_descended_m": 75.0,
+  "motion_type": {
+    "automotive": { "distance_km": 6.5, "time_seconds": 3000.0 },
+    "cycling": { "distance_km": 3.0, "time_seconds": 300.0 },
+    "running": { "distance_km": 1.0, "time_seconds": 120.0 },
+    "walking": { "distance_km": 2.0, "time_seconds": 200.0 },
+    "unknown": { "distance_km": 0.0, "time_seconds": 0.0 }
+  }
+}
+```
+
+The iOS app requests `date=today` when opening the motion-stats overlay.
 
 ---
 
