@@ -40,12 +40,13 @@ class HealthSyncManager {
         }
     }
 
-    /// Refreshes local HealthKit totals, uploads today's samples, and pulls the server summary.
+    /// Uploads today's samples and pulls the server summary.
+    /// HealthKit statistics are intentionally not refreshed here — background HKStatisticsQuery
+    /// returns zero data without background delivery registration, which would overwrite the
+    /// Live Activity with zeros. Stats are refreshed only when the app is foregrounded.
     private func performPeriodicHealthUpdate() async {
         Self.logger.info("Starting scheduled health sync (every 10m)")
-        async let local: Void = HealthManager.shared.refresh()
-        async let upload: Void = syncNow(announce: false)
-        _ = await (local, upload)
+        await syncNow(announce: false)
         await ServerAPIManager.shared.fetchHealthSummary()
     }
 

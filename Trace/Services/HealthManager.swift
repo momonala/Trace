@@ -40,6 +40,10 @@ class HealthManager {
         async let flightsVal = querySum(type: HKQuantityType(.flightsClimbed),        unit: .count(),               predicate: predicate)
 
         let (s, k, d, f) = await (stepsVal, kcalVal, kmVal, flightsVal)
+        guard let s, let k, let d, let f else {
+            Self.logger.warning("HealthKit query failed — keeping last known values")
+            return
+        }
         steps   = Int(s)
         kcal    = Int(k)
         km      = d
@@ -47,14 +51,18 @@ class HealthManager {
         LocationManager.shared.triggerLiveActivityUpdate()
     }
 
-    private func querySum(type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async -> Double {
+    private func querySum(type: HKQuantityType, unit: HKUnit, predicate: NSPredicate) async -> Double? {
         await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: type,
                 quantitySamplePredicate: predicate,
                 options: .cumulativeSum
-            ) { _, stats, _ in
-                continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit) ?? 0)
+            ) { _, stats, error in
+                if error != nil {
+                    continuation.resume(returning: nil)
+                } else {
+                    continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit) ?? 0)
+                }
             }
             store.execute(query)
         }
