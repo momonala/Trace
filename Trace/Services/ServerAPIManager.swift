@@ -103,6 +103,7 @@ class ServerAPIManager {
     private var healthDataEndpoint: String { "\(Self.baseURL)health-data" }
     private var healthBatchEndpoint: String { "\(Self.baseURL)ios-dump" }
     private var motionStatsEndpoint: String { "\(Self.baseURL)motion-stats" }
+    private var snoozeEndpoint: String { "\(Self.baseURL)snooze" }
     var statusURL: URL { URL(string: statusEndpoint)! }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
 
@@ -424,6 +425,27 @@ class ServerAPIManager {
         let stats = try JSONDecoder().decode(MotionStats.self, from: data)
         Self.logger.info("Motion stats fetched for \(stats.date)")
         return stats
+    }
+
+    /// Tell the server the phone is intentionally going offline so missing heartbeats
+    /// don't trigger Telegram alerts for the next `hours` (1–24).
+    func snoozeAlerts(hours: Int) async throws {
+        guard let url = URL(string: snoozeEndpoint) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["hours": hours])
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(
+                domain: "com.trace",
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "Snooze request failed (HTTP \(code))"]
+            )
+        }
+        Self.logger.info("Alerts snoozed for \(hours)h")
     }
 
     private func uploadFile(_ file: HourlyFile) async -> Error? {

@@ -293,8 +293,12 @@ struct ContentView: View {
     @State private var motionStats: MotionStats?
     @State private var motionStatsError: String?
     @State private var isLoadingMotionStats = false
+    @State private var showSnoozeConfirmation = false
+    @State private var snoozeMessage = ""
+    @State private var showSnoozeSheet = false
+    @State private var selectedSnoozeHours = 1
 
-    private let fabColumnTopOffset = UIScreen.main.bounds.height * 0.41
+    private let fabColumnTopOffset = UIScreen.main.bounds.height * 0.39
 
     private func focusOnCurrentLocation() {
         guard let location = locationManager.currentLocation else { return }
@@ -358,6 +362,18 @@ struct ContentView: View {
         }
     }
 
+    private func snooze(hours: Int) {
+        Task {
+            do {
+                try await fileManager.snoozeAlerts(hours: hours)
+                snoozeMessage = "Alerts snoozed for \(hours)h"
+            } catch {
+                snoozeMessage = "Snooze failed: \(error.localizedDescription)"
+            }
+            showSnoozeConfirmation = true
+        }
+    }
+
     private func showMotionStats() {
         showMotionStatsOverlay = true
         motionStats = nil
@@ -394,7 +410,9 @@ struct ContentView: View {
                             isPlottingCoordinates: $isPlottingCoordinates,
                             showUploadError: $showUploadError,
                             showRefreshError: $showRefreshError,
-                            showNoQueuedFilesInfo: $showNoQueuedFilesInfo
+                            showNoQueuedFilesInfo: $showNoQueuedFilesInfo,
+                            showSnoozeConfirmation: $showSnoozeConfirmation,
+                            snoozeMessage: snoozeMessage
                         )
                         .background(Color.black.opacity(0.7))
                         .cornerRadius(10)
@@ -443,6 +461,13 @@ struct ContentView: View {
                                 }
                             }
                             .disabled(isLoadingMotionStats)
+
+                            Button(action: { showSnoozeSheet = true }) {
+                                MapFloatingButton(isBusy: false) {
+                                    Image(systemName: "moon.zzz.fill")
+                                        .foregroundColor(.white)
+                                }
+                            }
                         }
                         .padding(.trailing)
                     }
@@ -461,6 +486,12 @@ struct ContentView: View {
                             motionStatsError = nil
                         }
                     )
+                }
+            }
+            .sheet(isPresented: $showSnoozeSheet) {
+                SnoozeSheet(selectedHours: $selectedSnoozeHours) { hours in
+                    showSnoozeSheet = false
+                    snooze(hours: hours)
                 }
             }
             .tabItem {
@@ -519,6 +550,47 @@ struct ContentView: View {
         )
     }
     
+}
+
+private struct SnoozeSheet: View {
+    @Binding var selectedHours: Int
+    let onConfirm: (Int) -> Void
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private func wakeTime(after hours: Int) -> String {
+        let date = Date().addingTimeInterval(TimeInterval(hours) * 3600)
+        return Self.timeFormatter.string(from: date)
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Picker("Hours", selection: $selectedHours) {
+                ForEach(1...24, id: \.self) { hours in
+                    Text("\(hours) hour\(hours == 1 ? "" : "s")  (\(wakeTime(after: hours)))").tag(hours)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 130)
+            .clipped()
+
+            Button(action: { onConfirm(selectedHours) }) {
+                Text("Snooze until \(wakeTime(after: selectedHours))")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.horizontal)
+        }
+        .padding(.top, 16)
+        .padding(.bottom, 20)
+        .presentationDetents([.height(220)])
+    }
 }
 
 private struct MotionStatsOverlay: View {
@@ -673,6 +745,8 @@ struct StatsPanel: View {
     @Binding var showUploadError: Bool
     @Binding var showRefreshError: Bool
     @Binding var showNoQueuedFilesInfo: Bool
+    @Binding var showSnoozeConfirmation: Bool
+    let snoozeMessage: String
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private func fmtSteps(_ count: Int) -> String {
@@ -755,6 +829,15 @@ struct StatsPanel: View {
                         message: "\(healthSync.lastSyncSampleCount) health samples synced",
                         color: .green,
                         onDismiss: { showHealthSyncSuccess = false }
+                    )
+                }
+
+                if showSnoozeConfirmation {
+                    ErrorMessage(
+                        icon: "moon.zzz.fill",
+                        message: snoozeMessage,
+                        color: .green,
+                        onDismiss: { showSnoozeConfirmation = false }
                     )
                 }
 

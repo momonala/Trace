@@ -58,6 +58,10 @@ The server aggregates non-stationary GPS points for the requested calendar day; 
 
 A Lock Screen and Dynamic Island widget shows tracking status, the last GPS fix time, and the last server heartbeat — updated on each location fix. It's implemented as a separate extension target using ActivityKit.
 
+### Alert Snooze
+
+The server watchdog alerts (via Telegram) when heartbeats stop. When you're deliberately turning the app off, the bottom floating button (moon icon) opens a sheet with a 1–24 hour wheel picker and POSTs to the server's `/snooze` endpoint, which mutes those alerts for the chosen window. A toast confirms; the server also sends a Telegram confirmation.
+
 ---
 
 ## Settings
@@ -229,6 +233,14 @@ POST /heartbeat
 ```
 
 Resets the watchdog timer. Alerts fire via Telegram if this goes missing for more than 60 seconds.
+
+#### Snooze alerts
+```http
+POST /snooze   {"hours": 8}
+→ {"status": "ok", "snooze_until": "2025-01-01T20:00:00"}
+```
+
+Mutes watchdog alerts for `hours` (1–24) — used when the phone is intentionally going offline so missing heartbeats don't trigger Telegram alerts. Sends a Telegram confirmation. Alerts are also muted during overnight quiet hours (11pm–7am).
 
 #### Daily motion stats
 ```http
