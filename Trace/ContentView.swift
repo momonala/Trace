@@ -498,13 +498,19 @@ struct ContentView: View {
                 Label("Live", systemImage: "location.fill")
             }
             .tag(0)
+
+            StatsView()
+                .tabItem {
+                    Label("Stats", systemImage: "chart.bar.fill")
+                }
+                .tag(1)
             
             // Settings Tab
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
-                .tag(1)
+                .tag(2)
         }
         .onAppear {
             // Set tab bar appearance
@@ -600,15 +606,11 @@ private struct MotionStatsOverlay: View {
     let onDismiss: () -> Void
 
     private func formatDurationHMS(_ seconds: Double) -> String {
-        let total = max(0, Int(seconds.rounded()))
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        return String(format: "%02d:%02d:%02d", h, m, s)
+        StatsFormatting.durationHMS(seconds)
     }
 
     private func formatSpeedKmh(_ metersPerSecond: Double) -> String {
-        String(format: "%.1f", metersPerSecond * 3.6)
+        StatsFormatting.speedKmh(metersPerSecond)
     }
 
     private var sortedMotionTypes: [(String, MotionStats.MotionTypeBreakdown)] {

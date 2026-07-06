@@ -59,6 +59,16 @@ struct MotionStats: Decodable {
     }
 }
 
+struct MotionStatsRange: Decodable {
+    let days: Int
+    let stats: [MotionStats]
+}
+
+struct HealthSummaryRange: Decodable {
+    let days: Int
+    let health: [HealthSummary]
+}
+
 struct LocationFeature: Encodable {
     struct Geometry: Encodable {
         let type = "Point"
@@ -103,6 +113,8 @@ class ServerAPIManager {
     private var healthDataEndpoint: String { "\(Self.baseURL)health-data" }
     private var healthBatchEndpoint: String { "\(Self.baseURL)ios-dump" }
     private var motionStatsEndpoint: String { "\(Self.baseURL)motion-stats" }
+    private var motionStatsRangeEndpoint: String { "\(Self.baseURL)motion-stats-range" }
+    private var healthDataRangeEndpoint: String { "\(Self.baseURL)health-data-range" }
     private var snoozeEndpoint: String { "\(Self.baseURL)snooze" }
     var statusURL: URL { URL(string: statusEndpoint)! }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
@@ -425,6 +437,51 @@ class ServerAPIManager {
         let stats = try JSONDecoder().decode(MotionStats.self, from: data)
         Self.logger.info("Motion stats fetched for \(stats.date)")
         return stats
+    }
+
+    func fetchMotionStatsRange(days: Int) async throws -> [MotionStats] {
+        guard let url = URL(string: "\(motionStatsRangeEndpoint)?days=\(days)") else {
+            throw URLError(.badURL)
+        }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(
+                domain: "com.trace",
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "Motion stats range request failed (HTTP \(code))"]
+            )
+        }
+        let range = try JSONDecoder().decode(MotionStatsRange.self, from: data)
+        Self.logger.info("Motion stats range fetched for \(range.days) days")
+        return range.stats
+    }
+
+    func fetchHealthSummaryRange(days: Int) async throws -> [HealthSummary] {
+        guard let url = URL(string: "\(healthDataRangeEndpoint)?days=\(days)") else {
+            throw URLError(.badURL)
+        }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(
+                domain: "com.trace",
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "Health range request failed (HTTP \(code))"]
+            )
+        }
+        let range = try JSONDecoder().decode(HealthSummaryRange.self, from: data)
+        Self.logger.info("Health summary range fetched for \(range.days) days")
+        return range.health
+    }
+
+    func fetchDailyStats(days: Int) async throws -> [DailyStats] {
+        async let motionRows = fetchMotionStatsRange(days: days)
+        async let healthRows = fetchHealthSummaryRange(days: days)
+        let motion = try await motionRows
+        let health = try await healthRows
+        let healthByDate = Dictionary(uniqueKeysWithValues: health.map { ($0.date, $0) })
+        return motion.map { DailyStats(motion: $0, health: healthByDate[$0.date]) }
     }
 
     /// Tell the server the phone is intentionally going offline so missing heartbeats
