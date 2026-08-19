@@ -499,18 +499,24 @@ struct ContentView: View {
             }
             .tag(0)
 
+            ReplayView()
+                .tabItem {
+                    Label("Replay", systemImage: "clock.arrow.circlepath")
+                }
+                .tag(1)
+
             StatsView()
                 .tabItem {
                     Label("Stats", systemImage: "chart.bar.fill")
                 }
-                .tag(1)
-            
+                .tag(2)
+
             // Settings Tab
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
-                .tag(2)
+                .tag(3)
         }
         .onAppear {
             // Set tab bar appearance

@@ -116,6 +116,7 @@ class ServerAPIManager {
     private var motionStatsRangeEndpoint: String { "\(Self.baseURL)motion-stats-range" }
     private var healthDataRangeEndpoint: String { "\(Self.baseURL)health-data-range" }
     private var snoozeEndpoint: String { "\(Self.baseURL)snooze" }
+    private var coordinatesEndpoint: String { "\(Self.baseURL)coordinates" }
     var statusURL: URL { URL(string: statusEndpoint)! }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
 
@@ -437,6 +438,33 @@ class ServerAPIManager {
         let stats = try JSONDecoder().decode(MotionStats.self, from: data)
         Self.logger.info("Motion stats fetched for \(stats.date)")
         return stats
+    }
+
+    /// Fetch one calendar day of trip paths for the replay map. Day boundaries are resolved
+    /// server-side so this stays consistent with `/motion-stats` and `/health-data`.
+    func fetchCoordinates(dayKey: String) async throws -> [[MapCoordinate]] {
+        guard let url = URL(string: "\(coordinatesEndpoint)?date=\(dayKey)") else {
+            throw URLError(.badURL)
+        }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw NSError(
+                domain: "com.trace",
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "Coordinates request failed (HTTP \(code))"]
+            )
+        }
+        let payload = try JSONDecoder().decode(CoordinatesResponse.self, from: data)
+        guard payload.status == "success" else {
+            throw NSError(
+                domain: "com.trace",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "Server could not load coordinates for \(dayKey)"]
+            )
+        }
+        Self.logger.info("Coordinates fetched for \(dayKey): \(payload.count) points")
+        return payload.paths
     }
 
     func fetchMotionStatsRange(days: Int) async throws -> [MotionStats] {

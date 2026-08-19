@@ -4,26 +4,6 @@ import SwiftUI
 import CoreData
 import ActivityKit
 
-struct MapCoordinate: Decodable {
-    let timestamp: String
-    let latitude: Double
-    let longitude: Double
-}
-
-struct CoordinatesResponse: Decodable {
-    let status: String
-    let count: Int
-    let lookbackHours: Int?
-    let paths: [[MapCoordinate]]
-
-    private enum CodingKeys: String, CodingKey {
-        case status
-        case count
-        case lookbackHours = "lookback_hours"
-        case paths
-    }
-}
-
 struct MapBoundingBox {
     let minLat: Double
     let maxLat: Double

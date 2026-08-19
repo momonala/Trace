@@ -30,6 +30,10 @@ The ghost trail renders as a semi-transparent orange polyline. On top of it, an 
 
 When historical data is loaded via "Refresh Map", the server paths render as a solid overlay on top of the ghost trail. The two overlays are independent — refreshing does not replace the ghost trail.
 
+### Replay
+
+The **Replay** tab scrubs through a single day's GPS track: pick a date, drag a slider through the hours, and a marker on the map shows where you were at that moment. `DayTrack` (`Trace/Models/DayTrack.swift`) indexes the server's segmented, simplified path so positions between kept vertices are interpolated — but never across a segment boundary, since that would draw a straight line through a coverage gap. Inside a gap the position reports as `.stale` (shown hollow) rather than silently holding the last fix.
+
 ### HealthKit Stats
 
 The stats panel shows today's step count, active calories, walking/running distance, and flights climbed. Values come from HealthKit locally (refreshed on foreground and every 10 minutes) and from the server's `/health-data` summary after a successful upload.
@@ -99,6 +103,8 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 | `Persistence.swift` | CoreData stack (`LocationPoint`, `HourlyFile`) |
 | `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight), stats panel, motion-stats overlay |
 | `MotionTypeDisplay.swift` | Shared motion-type emoji, labels, and sort order for stats UI |
+| `ReplayView.swift` / `ReplayMapView.swift` | Replay tab: day picker, hour scrubber, and marker map |
+| `DayTrack.swift` | Indexes a day's server path for scrubbing; interpolates within segments, reports `.stale` across gaps |
 | `SettingsView.swift` | Configuration UI |
 | `TraceActivityAttributes.swift` | Live Activity data model |
 | `TraceWidgetsLiveActivity.swift` | Lock Screen and Dynamic Island widget UI |
@@ -214,6 +220,7 @@ Writes a `.geojson` file to `incognita_raw_data/YYYY/MM/DD/HH/` and updates SQLi
 #### Fetch location history
 ```http
 GET /coordinates?lookback_hours=24
+GET /coordinates?date=2025-01-01
 → {
     "status": "success",
     "count": 412,
@@ -224,7 +231,7 @@ GET /coordinates?lookback_hours=24
 }
 ```
 
-Reads directly from the raw GeoJSON files. Before returning, paths are segmented (splits on gaps >60s or >100m between points) and simplified using Douglas-Peucker at a 5m tolerance, which typically reduces point count significantly. Each segment is returned as a separate array so the app can render discrete polylines without drawing straight lines across coverage gaps.
+Exactly one of `lookback_hours` (a window ending now — used by the Live map and ghost trail) or `date` (a single calendar day — used by the Replay tab) is passed; the response echoes back whichever was requested. Reads directly from the raw GeoJSON files. Before returning, paths are segmented (splits on gaps >60s or >100m between points) and simplified using Douglas-Peucker at a 5m tolerance, which typically reduces point count significantly. Each segment is returned as a separate array so the app can render discrete polylines without drawing straight lines across coverage gaps.
 
 #### Heartbeat
 ```http
