@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+#
+# Build Trace and install it on a paired iPhone over USB or wifi. See --help for usage.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT="$REPO_ROOT/Trace.xcodeproj"
+SCHEME="Trace"
+BUNDLE_ID="mnalavadi.Trace"
+DERIVED_DATA="$REPO_ROOT/build/DerivedData-device"
+LOG_FILE="$(mktemp -t trace-deploy)"
+# `cert-exp` is a zsh alias, so a non-interactive script has to call the project behind it.
+CERT_EXP_PROJECT="$HOME/code/projects/certificate-expiration"
+
+CONFIGURATION="Debug"
+DEVICE_QUERY=""
+LAUNCH=true
+CLEAN=false
+CERTS=true
+RETRIES=3
+
+# ---------------------------------------------------------------------------- output
+
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+    RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; BLUE=$'\033[34m'; CYAN=$'\033[36m'
+else
+    BOLD=""; DIM=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""
+fi
+
+STEP=0
+TOTAL_STEPS=4
+step()  { STEP=$((STEP + 1)); printf '\n%s[%d/%d]%s %s%s%s\n' "$BLUE" "$STEP" "$TOTAL_STEPS" "$RESET" "$BOLD" "$1" "$RESET"; }
+info()  { printf '      %s\n' "$1"; }
+detail(){ printf '      %s%s%s\n' "$DIM" "$1" "$RESET"; }
+ok()    { printf '      %s✓%s %s\n' "$GREEN" "$RESET" "$1"; }
+warn()  { printf '      %s!%s %s\n' "$YELLOW" "$RESET" "$1"; }
+die()   { printf '\n%serror%s %s\n' "$RED" "$RESET" "$1" >&2; printf '%sfull log: %s%s\n' "$DIM" "$LOG_FILE" "$RESET" >&2; exit 1; }
+
+# Seconds since the epoch, for per-step timings.
+now()      { date +%s; }
+elapsed()  { printf '%ss' "$(( $(now) - $1 ))"; }
+
+usage() {
+    cat <<EOF
+${BOLD}Trace deploy${RESET} — build the app and install it on a paired iPhone over USB or wifi.
+
+${BOLD}usage${RESET}
+  ./scripts/deploy.sh [options]
+
+${BOLD}options${RESET}
+  -d, --device NAME|UDID     device to target; default is the first usable one
+  -c, --configuration NAME   Debug (default) or Release
+      --no-launch            install but do not launch
+      --clean                delete DerivedData before building
+      --no-certs             skip both provisioning-profile steps
+  -h, --help                 show this help
+
+${BOLD}steps${RESET}
+  1. find a paired device            4. install
+  2. clear provisioning profiles     5. launch
+  3. build                           6. check certificate expiry
+
+Steps 2 and 6 shell out to cert-exp: profiles are cleared before the build so Xcode fetches fresh
+ones, then the new expiry dates are recorded afterwards. Either failing aborts the deploy.
+
+${BOLD}environment${RESET}
+  DEVELOPER_DIR   Xcode toolchain to use; resolved automatically when unset
+  NO_COLOR        disable coloured output
+
+Full xcodebuild output goes to a temp log whose path is printed on success and failure alike.
+EOF
+    exit 0
+}
+
+# cert-exp with no subcommand reports expiry dates; `clear` empties the profiles directory.
+# Any failure aborts the deploy — a silently skipped clear means building against a stale profile,
+# and a silently skipped report means no expiry warning lands in the calendar. Use --no-certs to opt
+# out deliberately.
+cert_exp() {
+    [[ -d "$CERT_EXP_PROJECT" ]] || die "cert-exp project not found at $CERT_EXP_PROJECT (--no-certs to skip)"
+    command -v uv >/dev/null || die "uv not on PATH, needed to run cert-exp (--no-certs to skip)"
+    uv run --project "$CERT_EXP_PROJECT" cert-exp "$@" || die "cert-exp $* failed"
+}
+
+# ---------------------------------------------------------------------------- args
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d|--device)        DEVICE_QUERY="${2:-}"; shift 2 ;;
+        -c|--configuration) CONFIGURATION="${2:-}"; shift 2 ;;
+        --no-launch)        LAUNCH=false; shift ;;
+        --clean)            CLEAN=true; shift ;;
+        --no-certs)         CERTS=false; shift ;;
+        -h|--help)          usage ;;
+        *)                  die "unknown argument: $1 (try --help)" ;;
+    esac
+done
+
+# Clearing profiles and the expiry report are two extra steps around the core four.
+[[ "$CERTS" == true ]] && TOTAL_STEPS=6
+
+# ---------------------------------------------------------------------------- toolchain
+
+# xcode-select often points at CommandLineTools, which has no xcodebuild or devicectl.
+if [[ -z "${DEVELOPER_DIR:-}" ]]; then
+    selected="$(xcode-select -p 2>/dev/null || true)"
+    if [[ "$selected" == *"/Xcode.app/"* ]]; then
+        export DEVELOPER_DIR="$selected"
+    elif [[ -d /Applications/Xcode.app ]]; then
+        export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+    else
+        die "no Xcode.app found — install Xcode or set DEVELOPER_DIR"
+    fi
+fi
+XCODEBUILD="$DEVELOPER_DIR/usr/bin/xcodebuild"
+[[ -x "$XCODEBUILD" ]] || die "xcodebuild missing at $XCODEBUILD"
+
+printf '%s%sTrace deploy%s  %s%s / %s%s\n' "$BOLD" "$CYAN" "$RESET" "$DIM" "$SCHEME" "$CONFIGURATION" "$RESET"
+detail "developer dir: $DEVELOPER_DIR"
+detail "log:           $LOG_FILE"
+
+# ---------------------------------------------------------------------------- 1. device
+
+step "Finding a paired device"
+device_start=$(now)
+
+devices="$(xcrun devicectl list devices 2>>"$LOG_FILE" || true)"
+[[ -n "$devices" ]] || die "devicectl returned nothing — is Xcode's device support installed?"
+
+# Rows look like: NAME  HOSTNAME  UUID  <state>  MODEL, where state is "connected",
+# "available (paired)", "unavailable", ... Anything but "unavailable" is worth trying, and note that
+# a naive /available/ test would match "unavailable" too.
+matches="$(printf '%s\n' "$devices" | awk '
+    $0 !~ /unavailable/ && match($0, /[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}/) {
+        print $1 "\t" substr($0, RSTART, RLENGTH)
+    }
+')"
+[[ -n "$matches" ]] || {
+    printf '%s\n' "$devices" | sed 's/^/      /'
+    die "no usable device — unlock the phone, trust this Mac, and check it is on the same wifi"
+}
+
+if [[ -n "$DEVICE_QUERY" ]]; then
+    matches="$(printf '%s\n' "$matches" | grep -i -- "$DEVICE_QUERY" || true)"
+    [[ -n "$matches" ]] || die "no usable device matching '$DEVICE_QUERY'"
+fi
+
+device_count="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
+DEVICE_NAME="$(printf '%s\n' "$matches" | head -1 | cut -f1)"
+DEVICE_UDID="$(printf '%s\n' "$matches" | head -1 | cut -f2)"
+
+ok "$DEVICE_NAME"
+detail "$DEVICE_UDID"
+[[ "$device_count" -gt 1 ]] && warn "$device_count devices matched; using the first (narrow it with -d)"
+detail "took $(elapsed "$device_start")"
+
+# ---------------------------------------------------------------------------- 2. profiles
+
+if [[ "$CERTS" == true ]]; then
+    step "Clearing provisioning profiles"
+    # Emptied before the build so -allowProvisioningUpdates fetches fresh profiles rather than
+    # reusing a stale one that is about to expire.
+    detail "cert-exp clear"
+    cert_exp clear
+fi
+
+# ---------------------------------------------------------------------------- 3. build
+
+step "Building"
+build_start=$(now)
+
+if [[ "$CLEAN" == true ]]; then
+    info "removing $DERIVED_DATA"
+    rm -rf "$DERIVED_DATA"
+fi
+
+# 'generic/platform=iOS' rather than 'id=<udid>': the id form makes xcodebuild wait on device
+# preparation and it times out on a locked phone, even when install would have worked fine.
+info "xcodebuild $SCHEME ($CONFIGURATION) for generic/platform=iOS"
+if ! "$XCODEBUILD" \
+        -project "$PROJECT" \
+        -scheme "$SCHEME" \
+        -configuration "$CONFIGURATION" \
+        -destination 'generic/platform=iOS' \
+        -derivedDataPath "$DERIVED_DATA" \
+        -allowProvisioningUpdates \
+        build >>"$LOG_FILE" 2>&1; then
+    printf '\n'
+    # Compiler diagnostics first — the tail of an xcodebuild log is almost never the useful part.
+    if grep -qE 'error:' "$LOG_FILE"; then
+        grep -E 'error:' "$LOG_FILE" \
+            | sed "s|$REPO_ROOT/||" \
+            | sort -u \
+            | head -15 \
+            | sed "s|^|      ${RED}✗${RESET} |"
+    else
+        detail "no 'error:' lines in the log — last 30 lines instead:"
+        tail -30 "$LOG_FILE" | sed 's/^/      /'
+    fi
+    die "build failed"
+fi
+
+APP_PATH="$DERIVED_DATA/Build/Products/$CONFIGURATION-iphoneos/$SCHEME.app"
+[[ -d "$APP_PATH" ]] || die "build succeeded but $APP_PATH is missing"
+
+ok "built $(du -sh "$APP_PATH" | cut -f1 | tr -d ' ')"
+detail "$APP_PATH"
+detail "took $(elapsed "$build_start")"
+
+# ---------------------------------------------------------------------------- 4. install
+
+# The wifi tunnel to the device drops often enough that a single failure means nothing.
+# Usage: retry <what> <command...>
+retry() {
+    local what="$1"; shift
+    local attempt=1
+    while true; do
+        if "$@" >>"$LOG_FILE" 2>&1; then
+            return 0
+        fi
+        if [[ $attempt -ge $RETRIES ]]; then
+            tail -15 "$LOG_FILE" | sed 's/^/      /'
+            die "$what failed after $RETRIES attempts"
+        fi
+        warn "$what attempt $attempt failed, retrying in 3s (usually a dropped wifi tunnel)"
+        attempt=$((attempt + 1))
+        sleep 3
+    done
+}
+
+step "Installing on $DEVICE_NAME"
+install_start=$(now)
+retry "install" xcrun devicectl device install app --device "$DEVICE_UDID" "$APP_PATH"
+ok "installed $BUNDLE_ID"
+detail "took $(elapsed "$install_start")"
+
+# ---------------------------------------------------------------------------- 5. launch
+
+step "Launching"
+if [[ "$LAUNCH" == false ]]; then
+    detail "skipped (--no-launch)"
+else
+    launch_start=$(now)
+    retry "launch" xcrun devicectl device process launch \
+        --device "$DEVICE_UDID" --terminate-existing "$BUNDLE_ID"
+    ok "running on $DEVICE_NAME"
+    detail "took $(elapsed "$launch_start")"
+fi
+
+# ---------------------------------------------------------------------------- 6. cert expiry
+
+if [[ "$CERTS" == true ]]; then
+    step "Checking certificate expiry"
+    # The build just regenerated the profiles, so this records their new dates.
+    detail "cert-exp"
+    cert_exp
+fi
+
+printf '\n%s%sDone.%s %sconfig=%s  device=%s  log=%s%s\n\n' \
+    "$BOLD" "$GREEN" "$RESET" "$DIM" "$CONFIGURATION" "$DEVICE_NAME" "$LOG_FILE" "$RESET"
