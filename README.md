@@ -62,6 +62,26 @@ The server aggregates non-stationary GPS points for the requested calendar day; 
 
 A Lock Screen and Dynamic Island widget shows tracking status, the last GPS fix time, and the last server heartbeat — updated on each location fix. It's implemented as a separate extension target using ActivityKit.
 
+### Orientation
+
+Only the Live map rotates. Replay, Stats, and Settings are locked to portrait so their tables and
+forms never have to lay out in a ~390pt-tall window.
+
+SwiftUI has no per-view orientation API, so the allowed mask lives on `AppDelegate` (UIKit asks it
+on every rotation) and `OrientationLock.apply(_:)` pushes into it from `ContentView`'s
+`onChange(of: selectedTab)`. Two gotchas:
+
+- The Info.plist orientation keys must still list every orientation used — the delegate can only
+  narrow what the plist already allows.
+- Setting the mask alone does nothing; the paired `requestGeometryUpdate` is what makes UIKit
+  re-evaluate. At launch there is no active scene to request against, so `ContentView` re-applies
+  when `scenePhase` becomes `.active`. Drop that and the map tab stays stuck in portrait until you
+  switch tabs and back.
+
+In landscape the Live tab folds its stats panel from four labelled rows into two, and the motion
+stats overlay lays its metrics out three per row instead of two. Both branch on
+`verticalSizeClass == .compact`.
+
 ### Alert Snooze
 
 The server watchdog alerts (via Telegram) when heartbeats stop. When you're deliberately turning the app off, the bottom floating button (moon icon) opens a sheet with a 1–24 hour wheel picker and POSTs to the server's `/snooze` endpoint, which mutes those alerts for the chosen window. A toast confirms; the server also sends a Telegram confirmation.
@@ -103,6 +123,7 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 | `Persistence.swift` | CoreData stack (`LocationPoint`, `HourlyFile`) |
 | `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight), stats panel, motion-stats overlay |
 | `MotionTypeDisplay.swift` | Shared motion-type emoji, labels, and sort order for stats UI |
+| `OrientationLock.swift` | App delegate orientation mask; keeps landscape to the Live map tab |
 | `ReplayView.swift` / `ReplayMapView.swift` | Replay tab: day picker, hour scrubber, and marker map |
 | `DayTrack.swift` | Indexes a day's server path for scrubbing; interpolates within segments, reports `.stale` across gaps |
 | `SettingsView.swift` | Configuration UI |

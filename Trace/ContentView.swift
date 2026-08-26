@@ -274,6 +274,7 @@ struct MapView: UIViewRepresentable {
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var locationManager = LocationManager.shared
     @State private var fileManager = ServerAPIManager.shared
     @State private var selectedTab = 0
@@ -298,7 +299,15 @@ struct ContentView: View {
     @State private var showSnoozeSheet = false
     @State private var selectedSnoozeHours = 1
 
-    private let fabColumnTopOffset = UIScreen.main.bounds.height * 0.39
+    /// Landscape iPhone. Only the Live tab ever reaches this; the rest are locked to portrait.
+    private var isLandscape: Bool { verticalSizeClass == .compact }
+
+    /// Portrait keeps the column at its historical proportional position. Landscape returns nil,
+    /// which turns the leading spacer flexible and pins the column to the bottom-right — a 0.39
+    /// offset plus five 44pt buttons overflows a 390pt-tall screen and clips the last two.
+    private var fabColumnTopOffset: CGFloat? {
+        isLandscape ? nil : UIScreen.main.bounds.height * 0.39
+    }
 
     private func focusOnCurrentLocation() {
         guard let location = locationManager.currentLocation else { return }
@@ -374,6 +383,11 @@ struct ContentView: View {
         }
     }
 
+    /// Only the Live map (tab 0) rotates; the data-dense tabs stay portrait.
+    private func orientationMask(for tab: Int) -> UIInterfaceOrientationMask {
+        tab == 0 ? .allButUpsideDown : .portrait
+    }
+
     private func showMotionStats() {
         showMotionStatsOverlay = true
         motionStats = nil
@@ -425,7 +439,7 @@ struct ContentView: View {
                 }
 
                 // Floating action buttons — independent layer so stats panel resizing doesn't shift them
-                VStack {
+                VStack(spacing: 0) {
                     Spacer()
                         .frame(height: fabColumnTopOffset)
                     HStack {
@@ -471,9 +485,11 @@ struct ContentView: View {
                         }
                         .padding(.trailing)
                     }
-                    Spacer()
+                    if !isLandscape {
+                        Spacer()
+                    }
                 }
-                .edgesIgnoringSafeArea(.bottom)
+                .padding(.bottom, isLandscape ? 8 : 0)
 
                 if showMotionStatsOverlay {
                     MotionStatsOverlay(
@@ -536,14 +552,21 @@ struct ContentView: View {
             
             locationManager.requestPermissions()
             autoFocusOnStartupIfNeeded()
+            OrientationLock.apply(orientationMask(for: selectedTab))
             Task { await HealthManager.shared.requestPermissionsAndLoad() }
             Task { await locationManager.refreshTodayPath() }
+        }
+        .onChange(of: selectedTab) { _, tab in
+            OrientationLock.apply(orientationMask(for: tab))
         }
         .onChange(of: locationManager.currentLocation) { _, _ in
             autoFocusOnStartupIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
+            // Re-apply: at launch onAppear runs before the scene is active, so its geometry
+            // request is dropped and the map tab would stay stuck in portrait.
+            OrientationLock.apply(orientationMask(for: selectedTab))
             Task {
                 async let health: Void = HealthManager.shared.refresh()
                 async let trail: Void = locationManager.refreshTodayPath()
@@ -565,6 +588,7 @@ struct ContentView: View {
 }
 
 private struct SnoozeSheet: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Binding var selectedHours: Int
     let onConfirm: (Int) -> Void
 
@@ -573,6 +597,8 @@ private struct SnoozeSheet: View {
         formatter.dateFormat = "HH:mm"
         return formatter
     }()
+
+    private var isLandscape: Bool { verticalSizeClass == .compact }
 
     private func wakeTime(after hours: Int) -> String {
         let date = Date().addingTimeInterval(TimeInterval(hours) * 3600)
@@ -587,7 +613,7 @@ private struct SnoozeSheet: View {
                 }
             }
             .pickerStyle(.wheel)
-            .frame(height: 130)
+            .frame(height: isLandscape ? 100 : 130)
             .clipped()
 
             Button(action: { onConfirm(selectedHours) }) {
@@ -601,15 +627,18 @@ private struct SnoozeSheet: View {
         }
         .padding(.top, 16)
         .padding(.bottom, 20)
-        .presentationDetents([.height(220)])
+        .presentationDetents([.height(isLandscape ? 185 : 220)])
     }
 }
 
 private struct MotionStatsOverlay: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     let stats: MotionStats?
     let isLoading: Bool
     let errorMessage: String?
     let onDismiss: () -> Void
+
+    private var isLandscape: Bool { verticalSizeClass == .compact }
 
     private func formatDurationHMS(_ seconds: Double) -> String {
         StatsFormatting.durationHMS(seconds)
@@ -631,82 +660,109 @@ private struct MotionStatsOverlay: View {
             }
     }
 
-    var body: some View {
-        ZStack {
-            Color.black.opacity(0.55)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onDismiss)
+    /// Six labelled metrics. Portrait fits two per row; landscape has the width for three, which
+    /// also keeps the card short enough to clear a 390pt-tall screen.
+    private var metricRows: [[(title: String, value: String)]] {
+        guard let stats else { return [] }
+        let metrics: [(title: String, value: String)] = [
+            ("Distance", String(format: "%.2f km", stats.totalKm)),
+            ("Active time", formatDurationHMS(stats.timeSpentSeconds)),
+            ("Max speed", "\(formatSpeedKmh(stats.maxSpeedMS)) km/h"),
+            ("Avg speed", "\(formatSpeedKmh(stats.avgSpeedMS)) km/h"),
+            ("Ascended", String(format: "%.0f m", stats.altitudeAscendedM)),
+            ("Descended", String(format: "%.0f m", stats.altitudeDescendedM)),
+        ]
+        let perRow = isLandscape ? 3 : 2
+        return stride(from: 0, to: metrics.count, by: perRow).map {
+            Array(metrics[$0..<min($0 + perRow, metrics.count)])
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 12) {
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.55)
+                    .ignoresSafeArea()
+
+                // minHeight centres a short card and lets a tall one scroll instead of running
+                // off a landscape screen.
+                ScrollView {
+                    card
+                        .frame(maxWidth: isLandscape ? 560 : 360)
+                        .padding(24)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .center)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onDismiss)
+        }
+    }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Today's motion")
+                    .font(.headline)
+                Spacer()
+                if let stats {
+                    Text(stats.date)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+
+            if isLoading {
                 HStack {
-                    Text("Today's motion")
-                        .font(.headline)
                     Spacer()
-                    if let stats {
-                        Text(stats.date)
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.7))
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                    Spacer()
+                }
+                .padding(.vertical, 24)
+            } else if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else if stats != nil {
+                ForEach(Array(metricRows.enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: 16) {
+                        ForEach(row, id: \.title) { metric in
+                            overlayMetric(title: metric.title, value: metric.value)
+                        }
                     }
                 }
 
-                if isLoading {
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        Spacer()
-                    }
-                    .padding(.vertical, 24)
-                } else if let errorMessage {
-                    Text(errorMessage)
+                if !sortedMotionTypes.isEmpty {
+                    Divider()
+                        .background(Color.white.opacity(0.4))
+
+                    Text("By activity")
                         .font(.caption)
-                        .foregroundColor(.orange)
-                } else if let stats {
-                    HStack(spacing: 16) {
-                        overlayMetric(title: "Distance", value: String(format: "%.2f km", stats.totalKm))
-                        overlayMetric(title: "Active time", value: formatDurationHMS(stats.timeSpentSeconds))
-                    }
-                    HStack(spacing: 16) {
-                        overlayMetric(title: "Max speed", value: "\(formatSpeedKmh(stats.maxSpeedMS)) km/h")
-                        overlayMetric(title: "Avg speed", value: "\(formatSpeedKmh(stats.avgSpeedMS)) km/h")
-                    }
-                    HStack(spacing: 16) {
-                        overlayMetric(title: "Ascended", value: String(format: "%.0f m", stats.altitudeAscendedM))
-                        overlayMetric(title: "Descended", value: String(format: "%.0f m", stats.altitudeDescendedM))
-                    }
+                        .foregroundColor(.white.opacity(0.7))
 
-                    if !sortedMotionTypes.isEmpty {
-                        Divider()
-                            .background(Color.white.opacity(0.4))
-
-                        Text("By activity")
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.7))
-
-                        ForEach(sortedMotionTypes, id: \.0) { type, breakdown in
-                            HStack(spacing: 8) {
-                                Text(MotionTypeDisplay.emoji(for: type))
-                                Text(MotionTypeDisplay.label(for: type))
-                                    .font(.callout)
-                                Spacer()
-                                Text(String(format: "%.2f km", breakdown.distanceKm))
-                                    .font(.callout)
-                                Text(formatDurationHMS(breakdown.timeSeconds))
-                                    .font(.callout.monospacedDigit())
-                                    .foregroundColor(.white.opacity(0.85))
-                            }
+                    ForEach(sortedMotionTypes, id: \.0) { type, breakdown in
+                        HStack(spacing: 8) {
+                            Text(MotionTypeDisplay.emoji(for: type))
+                            Text(MotionTypeDisplay.label(for: type))
+                                .font(.callout)
+                            Spacer()
+                            Text(String(format: "%.2f km", breakdown.distanceKm))
+                                .font(.callout)
+                            Text(formatDurationHMS(breakdown.timeSeconds))
+                                .font(.callout.monospacedDigit())
+                                .foregroundColor(.white.opacity(0.85))
                         }
                     }
                 }
             }
-            .padding(16)
-            .frame(maxWidth: 360)
-            .background(Color.black.opacity(0.7))
-            .foregroundColor(.white)
-            .cornerRadius(10)
-            .padding(.horizontal, 24)
-            .onTapGesture { }
         }
+        .padding(16)
+        .background(Color.black.opacity(0.7))
+        .foregroundColor(.white)
+        .cornerRadius(10)
+        // Swallow taps so only the backdrop dismisses.
+        .onTapGesture { }
     }
 
     private func overlayMetric(title: String, value: String) -> some View {
@@ -742,6 +798,7 @@ private struct MapFloatingButton<Content: View>: View {
 }
 
 struct StatsPanel: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var locationManager = LocationManager.shared
     @State private var fileManager = ServerAPIManager.shared
     @State private var healthManager = HealthManager.shared
@@ -767,61 +824,152 @@ struct StatsPanel: View {
         return coords + accuracy
     }
     
+    /// Landscape iPhone: the panel floats over the map in a 390pt-tall window, so the portrait
+    /// stack of four labelled rows would eat half the screen. Landscape spends the extra width
+    /// instead — the same fields, folded into two rows.
+    private var isLandscape: Bool { verticalSizeClass == .compact }
+
+    private var hasHealthData: Bool {
+        healthManager.isAvailable || fileManager.healthSummary != nil
+    }
+
+    /// The status stack is empty most of the time; skipping it keeps the panel from carrying a
+    /// strip of dead space under the last row.
+    private var hasStatusMessages: Bool {
+        showNoQueuedFilesInfo || showHealthSyncSuccess || showSnoozeConfirmation
+            || isLoadingCoordinates || isPlottingCoordinates
+            || (showUploadError && fileManager.uploadError != nil)
+            || (showRefreshError && locationManager.mapRefreshError != nil)
+    }
+
+    private var divider: some View {
+        Divider()
+            .background(Color.white.opacity(0.5))
+    }
+
+    // MARK: - Fields
+
+    @ViewBuilder private var coordinatesField: some View {
+        if let location = locationManager.currentLocation {
+            StatsRow(
+                title: "Coordinates (m)",
+                value: formatCoordinates(location),
+                showTrackingStatus: true,
+                isTracking: locationManager.isTracking
+            )
+        }
+    }
+
+    @ViewBuilder private var speedField: some View {
+        if let location = locationManager.currentLocation {
+            StatsRow(title: "Speed (km/h)", value: String(format: "%.1f", location.speed * 3.6))
+        }
+    }
+
+    @ViewBuilder private var altitudeField: some View {
+        if let location = locationManager.currentLocation {
+            StatsRow(title: "Altitude (m)",
+                     value: String(format: "%.0f ± %.0f", location.altitude, location.verticalAccuracy))
+        }
+    }
+
+    private var motionField: some View {
+        StatsRow(title: "Motion", value: MotionTypeDisplay.emoji(for: locationManager.currentMotionType))
+    }
+
+    @ViewBuilder private var queueFields: some View {
+        StatsRow(title: "Buffer", value: "\(fileManager.bufferSize)")
+        StatsRow(title: "Queue", value: "\(fileManager.queuedFiles)")
+    }
+
+    @ViewBuilder private var ageField: some View {
+        if let lastTime = fileManager.lastPointTime {
+            StatsRow(title: "Age", value: formatTimeInterval(currentTime.timeIntervalSince(lastTime)))
+        }
+    }
+
+    /// Server summary when available, HealthKit totals as the fallback.
+    @ViewBuilder private var healthFields: some View {
+        let summary = fileManager.healthSummary
+        StatsRow(title: "Steps",   value: fmtSteps(summary?.steps ?? healthManager.steps))
+        StatsRow(title: "Kcal",    value: "\(summary?.kcals.map { Int($0) } ?? healthManager.kcal)")
+        StatsRow(title: "Km",      value: String(format: "%.1f", summary?.km ?? healthManager.km))
+        StatsRow(title: "Flights", value: "\(summary?.flightsClimbed ?? healthManager.flights)")
+    }
+
+    // MARK: - Layouts
+
+    private var portraitFields: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            coordinatesField
+            divider
+            HStack(spacing: 12) {
+                speedField
+                altitudeField
+                motionField
+            }
+            divider
+            HStack(spacing: 12) {
+                queueFields
+                ageField
+            }
+            if hasHealthData {
+                divider
+                HStack(spacing: 12) {
+                    healthFields
+                }
+            }
+        }
+    }
+
+    private var landscapeFields: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                coordinatesField
+                speedField
+                altitudeField
+                motionField
+                ageField
+            }
+            divider
+            HStack(spacing: 12) {
+                queueFields
+                if hasHealthData {
+                    healthFields
+                }
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Row 1: Coordinates with tracking status
-            if let location = locationManager.currentLocation {
-                StatsRow(
-                    title: "Coordinates (m)",
-                    value: formatCoordinates(location),
-                    showTrackingStatus: true,
-                    isTracking: locationManager.isTracking
-                )
-            }
-            
-            Divider()
-                .background(Color.white.opacity(0.5))
-            
-            // Row 2: Speed and Altitude, Motion
-            if let location = locationManager.currentLocation {
-                HStack(spacing: 12) {
-                    StatsRow(title: "Speed (km/h)", value: String(format: "%.1f", location.speed * 3.6))
-                    StatsRow(title: "Altitude (m)",
-                            value: String(format: "%.0f ± %.0f", location.altitude, location.verticalAccuracy))
-                    StatsRow(title: "Motion", value: MotionTypeDisplay.emoji(for: locationManager.currentMotionType))
-                }
-            }
-            
-            
-            Divider()
-                .background(Color.white.opacity(0.5))
-            
-            // Row 3: Buffer, Queue, Age
-            HStack(spacing: 12) {
-                StatsRow(title: "Buffer", value: "\(fileManager.bufferSize)")
-                StatsRow(title: "Queue", value: "\(fileManager.queuedFiles)")
-                if let lastTime = fileManager.lastPointTime {
-                    let timeSince = currentTime.timeIntervalSince(lastTime)
-                    StatsRow(title: "Age", value: formatTimeInterval(timeSince))
-                }
+            if isLandscape {
+                landscapeFields
+            } else {
+                portraitFields
             }
 
-            // Row 4: Health — server summary when available, HealthKit fallback
-            if healthManager.isAvailable || fileManager.healthSummary != nil {
-                Divider()
-                    .background(Color.white.opacity(0.5))
-
-                let s = fileManager.healthSummary
-                HStack(spacing: 12) {
-                    StatsRow(title: "Steps",   value: fmtSteps(s?.steps ?? healthManager.steps))
-                    StatsRow(title: "Kcal",    value: "\(s?.kcals.map { Int($0) } ?? healthManager.kcal)")
-                    StatsRow(title: "Km",      value: String(format: "%.1f", s?.km ?? healthManager.km))
-                    StatsRow(title: "Flights", value: "\(s?.flightsClimbed ?? healthManager.flights)")
-                }
+            if hasStatusMessages {
+                statusMessages
             }
+        }
+        .padding(10)
+        .foregroundColor(.white)
+        .onReceive(timer) { now in
+            currentTime = now
+        }
+        .onChange(of: healthSync.lastSyncAt) { _, _ in
+            showNoQueuedFilesInfo = false
+            if healthSync.announceNextSync {
+                showHealthSyncSuccess = true
+                healthSync.announceNextSync = false
+            }
+            Task { await fileManager.fetchHealthSummary() }
+        }
+    }
 
-            // Status and Error messages
-            VStack(spacing: 4) {
+    private var statusMessages: some View {
+        VStack(spacing: 4) {
                 if showNoQueuedFilesInfo {
                     ErrorMessage(
                         icon: "tray",
@@ -888,24 +1036,9 @@ struct StatsPanel: View {
                         }
                     )
                 }
-            }
-        }
-        .padding(10)
-        .foregroundColor(.white)
-        .onReceive(timer) { now in
-            currentTime = now
-        }
-        .onChange(of: healthSync.lastSyncAt) { _, _ in
-            showNoQueuedFilesInfo = false
-            if healthSync.announceNextSync {
-                showHealthSyncSuccess = true
-                healthSync.announceNextSync = false
-            }
-            Task { await fileManager.fetchHealthSummary() }
         }
     }
 
-    
     private func formatTimeInterval(_ interval: TimeInterval) -> String {
         guard interval > 0 else { return "0s" }
         let total   = Int(interval)

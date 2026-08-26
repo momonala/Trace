@@ -9,6 +9,9 @@ import SwiftUI
 
 @main
 struct TraceApp: App {
+    // Owns the interface-orientation mask that OrientationLock drives per tab.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     let persistenceController = PersistenceController.shared
 
     var body: some Scene {
