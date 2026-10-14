@@ -20,6 +20,9 @@ CLEAN=false
 CERTS=true
 RETRIES=3
 
+# Kept for the SSH guard, which re-suggests the invocation after the args have been shifted away.
+ORIGINAL_ARGS=("$@")
+
 # ---------------------------------------------------------------------------- output
 
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
@@ -68,6 +71,7 @@ ones, then the new expiry dates are recorded afterwards. Either failing aborts t
 ${BOLD}environment${RESET}
   DEVELOPER_DIR   Xcode toolchain to use; resolved automatically when unset
   NO_COLOR        disable coloured output
+  TRACE_ALLOW_SSH set to 1 to run over SSH anyway, after unlocking the login keychain
 
 Full xcodebuild output goes to a temp log whose path is printed on success and failure alike.
 EOF
@@ -101,6 +105,24 @@ done
 # Clearing profiles and the expiry report are two extra steps around the core four.
 [[ "$CERTS" == true ]] && TOTAL_STEPS=6
 
+# ---------------------------------------------------------------------------- session
+
+# Code signing reads the Apple ID account out of the login keychain, which macOS only unlocks at GUI
+# login. Over SSH the keychain stays locked, so xcodebuild sees no accounts and fails halfway through
+# the build with "No Accounts" and "No profiles for ...". Fail fast here instead, and say how to get
+# a signable session. TRACE_ALLOW_SSH=1 overrides once the keychain has been unlocked by hand.
+if [[ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SSH_CLIENT:-}" && "${TRACE_ALLOW_SSH:-}" != 1 ]]; then
+    die "running over SSH — the login keychain is locked, so the build cannot be code signed.
+      Run this on the Mac itself, or from the SSH session either
+
+        launchctl asuser $(id -u) $(command -v bash) ${BASH_SOURCE[0]} ${ORIGINAL_ARGS[*]:-}
+
+      to borrow the already-unlocked GUI session, or unlock the keychain first and re-run with
+      TRACE_ALLOW_SSH=1:
+
+        security unlock-keychain ~/Library/Keychains/login.keychain-db"
+fi
+
 # ---------------------------------------------------------------------------- toolchain
 
 # xcode-select often points at CommandLineTools, which has no xcodebuild or devicectl.
@@ -126,19 +148,23 @@ detail "log:           $LOG_FILE"
 step "Finding a paired device"
 device_start=$(now)
 
-devices="$(xcrun devicectl list devices 2>>"$LOG_FILE" || true)"
-[[ -n "$devices" ]] || die "devicectl returned nothing — is Xcode's device support installed?"
+command -v jq >/dev/null || die "jq not on PATH, needed to parse devicectl output"
+devices_json="$(mktemp -t trace-devices)"
+xcrun devicectl list devices --json-output "$devices_json" >>"$LOG_FILE" 2>&1 \
+    || die "devicectl list devices failed — is Xcode's device support installed?"
 
-# Rows look like: NAME  HOSTNAME  UUID  <state>  MODEL, where state is "connected",
-# "available (paired)", "unavailable", ... Anything but "unavailable" is worth trying, and note that
-# a naive /available/ test would match "unavailable" too.
-matches="$(printf '%s\n' "$devices" | awk '
-    $0 !~ /unavailable/ && match($0, /[0-9A-Fa-f]{8}-([0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}/) {
-        print $1 "\t" substr($0, RSTART, RLENGTH)
-    }
-')"
+# Simulators show up in devicectl too, so keep physical devices only. A device the table calls
+# "available" or "connected" has a transportType (localNetwork, wired); an "unavailable" one has none.
+matches="$(jq -r '
+    .result.devices[]
+    | select(.visibilityClass != "simulators" and .hardwareProperties.reality != "simulated")
+    | select(.hardwareProperties.platform == "iOS")
+    | select(.connectionProperties.pairingState == "paired" and .connectionProperties.transportType != null)
+    | "\(.deviceProperties.name)\t\(.hardwareProperties.udid)"
+' "$devices_json")"
+rm -f "$devices_json"
 [[ -n "$matches" ]] || {
-    printf '%s\n' "$devices" | sed 's/^/      /'
+    xcrun devicectl list devices 2>>"$LOG_FILE" | sed 's/^/      /'
     die "no usable device — unlock the phone, trust this Mac, and check it is on the same wifi"
 }
 
