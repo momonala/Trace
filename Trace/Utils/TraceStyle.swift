@@ -30,8 +30,10 @@ enum TraceStyle {
         return MotionTypeDisplay.color(for: key)
     }
 
-    /// Untravelled portion of the Replay track polyline.
-    static var trackDim: UIColor = UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.35)
-    /// Travelled portion of the Replay track polyline, up to the scrubbed head index.
-    static var trackTravelled: UIColor = UIColor(red: 1.0, green: 0.58, blue: 0.0, alpha: 0.9)
+    /// Untravelled Replay track and the main map's ghost trail.
+    static var trackDim: UIColor = UIColor(red: 1, green: 0.44, blue: 0, alpha: 0.5)
+    static var trackDimWidth: CGFloat = 2
+    /// Travelled Replay track and the main map's live path.
+    static var trackTravelled: UIColor = UIColor(red: 1, green: 0.44, blue: 0, alpha: 0.85)
+    static var trackTravelledWidth: CGFloat = 3
 }

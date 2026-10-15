@@ -43,7 +43,14 @@ struct ReplayMapView: UIViewRepresentable {
         }
 
         if let overlay = coordinator.overlay, overlay.headIndex != headIndex {
-            let invalidated = overlay.mapRect(between: overlay.headIndex, and: headIndex)
+            let mapPointsPerScreenPoint = mapView.bounds.width > 0
+                ? mapView.visibleMapRect.size.width / Double(mapView.bounds.width)
+                : 0
+            let invalidated = overlay.mapRect(
+                between: overlay.headIndex,
+                and: headIndex,
+                padding: mapPointsPerScreenPoint * Double(TraceStyle.trackTravelledWidth)
+            )
             overlay.headIndex = headIndex
             coordinator.renderer?.setNeedsDisplay(invalidated)
         }
@@ -143,9 +150,9 @@ final class TrackProgressOverlay: NSObject, MKOverlay {
     var coordinate: CLLocationCoordinate2D { path.first ?? CLLocationCoordinate2D() }
     var boundingMapRect: MKMapRect { cachedBoundingMapRect }
 
-    /// Bounding rect spanning two vertex indices, padded generously, so a head-index change only
-    /// invalidates the stretch of track whose highlight actually moved.
-    func mapRect(between oldHead: Int, and newHead: Int) -> MKMapRect {
+    /// Bounding rect spanning two vertex indices, padded by the stroke width, so a
+    /// head-index change only invalidates the stretch of track whose highlight actually moved.
+    func mapRect(between oldHead: Int, and newHead: Int, padding: Double) -> MKMapRect {
         let lastIndex = path.count - 1
         guard lastIndex >= 0 else { return .null }
         let low = max(0, min(oldHead, newHead))
@@ -154,7 +161,7 @@ final class TrackProgressOverlay: NSObject, MKOverlay {
         let rect = path[low...high].reduce(MKMapRect.null) { rect, coordinate in
             rect.union(MKMapRect(origin: MKMapPoint(coordinate), size: MKMapSize(width: 0, height: 0)))
         }
-        return rect.insetBy(dx: -500, dy: -500)
+        return rect.insetBy(dx: -padding, dy: -padding)
     }
 
     private static func boundingRect(for path: [CLLocationCoordinate2D]) -> MKMapRect {
@@ -177,9 +184,21 @@ final class TrackProgressRenderer: MKOverlayRenderer {
         context.setLineCap(.round)
         context.setLineJoin(.round)
 
-        stroke(overlay: overlay, upTo: overlay.path.count - 1, color: TraceStyle.trackDim, width: 3, in: context)
+        stroke(
+            overlay: overlay,
+            upTo: overlay.path.count - 1,
+            color: TraceStyle.trackDim,
+            width: TraceStyle.trackDimWidth / zoomScale,
+            in: context
+        )
         if overlay.headIndex > 0 {
-            stroke(overlay: overlay, upTo: overlay.headIndex, color: TraceStyle.trackTravelled, width: 3, in: context)
+            stroke(
+                overlay: overlay,
+                upTo: overlay.headIndex,
+                color: TraceStyle.trackTravelled,
+                width: TraceStyle.trackTravelledWidth / zoomScale,
+                in: context
+            )
         }
     }
 

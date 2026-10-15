@@ -16,13 +16,14 @@ struct ReplayView: View {
     @State private var secondsIntoDay: Double = 0
     /// Days already fetched, so stepping back and forth with the chevrons is instant.
     @State private var tracks: [String: DayTrack] = [:]
-    @State private var isLoading = false
-    @State private var errorMessage: String?
+    @State private var loadErrors: [String: String] = [:]
     @State private var fitToken = 0
     @State private var recenterToken = 0
 
     private var dayKey: String { DayTrack.dayKey(for: selectedDay) }
     private var track: DayTrack? { tracks[dayKey] }
+    private var errorMessage: String? { loadErrors[dayKey] }
+    private var isLoading: Bool { track == nil && errorMessage == nil }
 
     private var dayLength: TimeInterval { track?.dayLength ?? 86400 }
 
@@ -119,7 +120,9 @@ struct ReplayView: View {
     // MARK: - Map
 
     private var mapSection: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
+            TraceStyle.card
+
             if let track, !track.isEmpty {
                 ReplayMapView(
                     track: track,
@@ -128,23 +131,40 @@ struct ReplayView: View {
                     fitToken: fitToken,
                     recenterToken: recenterToken
                 )
+            } else if isLoading {
+                VStack(spacing: 10) {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle(tint: TraceStyle.primaryText))
+                    Text("Loading track…")
+                        .font(.caption)
+                        .foregroundColor(TraceStyle.secondaryText)
+                }
+                .padding(16)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: TraceStyle.cardRadius))
+                .transition(.opacity)
             } else {
-                Text(emptyStateMessage)
-                    .font(.subheadline)
-                    .foregroundColor(TraceStyle.secondaryText)
-                    .frame(width: nil, height: nil, alignment: .center)
-                    .background(TraceStyle.card)
-            }
-
-            if isLoading {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .padding(12)
-                    .background(Color.black.opacity(0.6))
-                    .clipShape(Circle())
-                    .padding(12)
+                emptyState
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.easeInOut(duration: 0.2), value: isLoading)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: errorMessage == nil ? "map" : "exclamationmark.triangle")
+                .font(.title2)
+                .foregroundColor(TraceStyle.tertiaryText)
+            Text(emptyStateMessage)
+                .font(.subheadline)
+                .foregroundColor(TraceStyle.secondaryText)
+                .multilineTextAlignment(.center)
+            if errorMessage != nil {
+                Button("Retry") { Task { await loadIfNeeded() } }
+                    .tint(TraceStyle.accent)
+            }
+        }
+        .padding()
     }
 
     private var emptyStateMessage: String {
@@ -174,6 +194,7 @@ struct ReplayView: View {
                     step: 60,
                     onEditingChanged: { _ in resetIfNeeded() }
                 )
+                .disabled(track?.isEmpty ?? true)
             }
 
             HStack {
@@ -231,18 +252,19 @@ struct ReplayView: View {
     }
 
     private func loadIfNeeded() async {
-        guard tracks[dayKey] == nil else { return }
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
+        let day = selectedDay
+        let key = dayKey
+        guard tracks[key] == nil else { return }
+        loadErrors[key] = nil
         do {
-            let paths = try await apiManager.fetchCoordinates(dayKey: dayKey)
-            let newTrack = DayTrack(day: selectedDay, paths: paths, calendar: .current)
-            tracks[dayKey] = newTrack
+            let paths = try await apiManager.fetchCoordinates(dayKey: key)
+            let newTrack = DayTrack(day: day, paths: paths, calendar: .current)
+            tracks[key] = newTrack
+            guard key == dayKey else { return }
             resetScrubber(for: newTrack)
             fitToken += 1
         } catch {
-            errorMessage = error.localizedDescription
+            loadErrors[key] = error.localizedDescription
         }
     }
 

@@ -91,7 +91,7 @@ final class GhostHighlightRenderer: MKOverlayRenderer {
         for i in tailIdx..<headIdx {
             guard !ghostOverlay.segmentStarts.contains(i + 1) else { continue }
             let alpha = CGFloat(i - tailIdx + 1) / CGFloat(headIdx - tailIdx)
-            context.setStrokeColor(UIColor(red: 1, green: 0.44, blue: 0, alpha: alpha).cgColor)
+            context.setStrokeColor(TraceStyle.trackTravelled.withAlphaComponent(alpha).cgColor)
             let p1 = point(for: MKMapPoint(path[i]))
             let p2 = point(for: MKMapPoint(path[i + 1]))
             context.move(to: p1)
@@ -257,14 +257,14 @@ struct MapView: UIViewRepresentable {
             }
             if let ghost = overlay as? GhostPolyline {
                 let renderer = MKPolylineRenderer(polyline: ghost)
-                renderer.strokeColor = UIColor(red: 1, green: 0.44, blue: 0, alpha: 0.5)
-                renderer.lineWidth = 2
+                renderer.strokeColor = TraceStyle.trackDim
+                renderer.lineWidth = TraceStyle.trackDimWidth
                 return renderer
             }
             if let polyline = overlay as? MKPolyline {
                 let renderer = MKPolylineRenderer(polyline: polyline)
-                renderer.strokeColor = UIColor(red: 1, green: 0.44, blue: 0, alpha: 0.85)
-                renderer.lineWidth = 3
+                renderer.strokeColor = TraceStyle.trackTravelled
+                renderer.lineWidth = TraceStyle.trackTravelledWidth
                 return renderer
             }
             return MKOverlayRenderer()
