@@ -297,7 +297,6 @@ struct ContentView: View {
     @State private var showSnoozeConfirmation = false
     @State private var snoozeMessage = ""
     @State private var showSnoozeSheet = false
-    @State private var selectedSnoozeHours = 1
 
     /// Landscape iPhone. Only the Live tab ever reaches this; the rest are locked to portrait.
     private var isLandscape: Bool { verticalSizeClass == .compact }
@@ -371,11 +370,11 @@ struct ContentView: View {
         }
     }
 
-    private func snooze(hours: Int) {
+    private func snooze(minutes: Int, until wakeTime: String) {
         Task {
             do {
-                try await fileManager.snoozeAlerts(hours: hours)
-                snoozeMessage = "Alerts snoozed for \(hours)h"
+                try await fileManager.snoozeAlerts(minutes: minutes)
+                snoozeMessage = "Alerts snoozed until \(wakeTime)"
             } catch {
                 snoozeMessage = "Snooze failed: \(error.localizedDescription)"
             }
@@ -505,9 +504,9 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showSnoozeSheet) {
-                SnoozeSheet(selectedHours: $selectedSnoozeHours) { hours in
+                SnoozeSheet { minutes, wakeTime in
                     showSnoozeSheet = false
-                    snooze(hours: hours)
+                    snooze(minutes: minutes, until: wakeTime)
                 }
             }
             .tabItem {
@@ -589,36 +588,52 @@ struct ContentView: View {
 
 private struct SnoozeSheet: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @Binding var selectedHours: Int
-    let onConfirm: (Int) -> Void
+    let onConfirm: (_ minutes: Int, _ wakeTime: String) -> Void
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
+    @State private var wakeTime = Date().addingTimeInterval(3600)
 
     private var isLandscape: Bool { verticalSizeClass == .compact }
 
-    private func wakeTime(after hours: Int) -> String {
-        let date = Date().addingTimeInterval(TimeInterval(hours) * 3600)
-        return Self.timeFormatter.string(from: date)
+    private var wakeTimeLabel: String { wakeTime.formatted(date: .omitted, time: .shortened) }
+
+    private func minutesUntilWakeTime() -> Int {
+        let now = Date()
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.hour, .minute], from: wakeTime)
+        var target = calendar.date(
+            bySettingHour: components.hour ?? 0, minute: components.minute ?? 0, second: 0, of: now
+        ) ?? now
+        if target <= now {
+            target = calendar.date(byAdding: .day, value: 1, to: target) ?? target
+        }
+        let minutes = Int((target.timeIntervalSince(now) / 60).rounded(.up))
+        return min(max(minutes, 1), 24 * 60)
+    }
+
+    private var durationLabel: String {
+        let minutes = minutesUntilWakeTime()
+        let hours = minutes / 60
+        let hourPart = hours == 1 ? "1 hour" : "\(hours) hours"
+        switch (hours, minutes % 60) {
+        case (0, let mins): return "\(mins) min"
+        case (_, 0): return hourPart
+        case (_, let mins): return "\(hourPart) \(mins) min"
+        }
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            Picker("Hours", selection: $selectedHours) {
-                ForEach(1...24, id: \.self) { hours in
-                    Text("\(hours) hour\(hours == 1 ? "" : "s")  (\(wakeTime(after: hours)))").tag(hours)
-                }
-            }
-            .pickerStyle(.wheel)
-            .frame(height: isLandscape ? 100 : 130)
-            .clipped()
+            DatePicker("Wake time", selection: $wakeTime, displayedComponents: .hourAndMinute)
+                .datePickerStyle(.wheel)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+                .frame(height: isLandscape ? 100 : 130)
+                .clipped()
 
-            Button(action: { onConfirm(selectedHours) }) {
-                Text("Snooze until \(wakeTime(after: selectedHours))")
+            Button(action: { onConfirm(minutesUntilWakeTime(), wakeTimeLabel) }) {
+                Text("Snooze until \(wakeTimeLabel) (\(durationLabel))")
                     .font(.headline)
+                    .monospacedDigit()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
             }

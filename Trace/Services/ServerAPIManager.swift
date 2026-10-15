@@ -513,13 +513,13 @@ class ServerAPIManager {
     }
 
     /// Tell the server the phone is intentionally going offline so missing heartbeats
-    /// don't trigger Telegram alerts for the next `hours` (1–24).
-    func snoozeAlerts(hours: Int) async throws {
+    /// don't trigger Telegram alerts for the next `minutes` (1–1440).
+    func snoozeAlerts(minutes: Int) async throws {
         guard let url = URL(string: snoozeEndpoint) else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["hours": hours])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["minutes": minutes])
 
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -530,7 +530,7 @@ class ServerAPIManager {
                 userInfo: [NSLocalizedDescriptionKey: "Snooze request failed (HTTP \(code))"]
             )
         }
-        Self.logger.info("Alerts snoozed for \(hours)h")
+        Self.logger.info("Alerts snoozed for \(minutes)m")
     }
 
     private func uploadFile(_ file: HourlyFile) async -> Error? {
