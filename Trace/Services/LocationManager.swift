@@ -133,16 +133,16 @@ class LocationManager: NSObject {
     }
 
     @objc private func handleAppTermination() {
-        // Use a semaphore to block briefly so the async end can complete before the process dies
-        let semaphore = DispatchSemaphore(value: 0)
-        Task {
-            if let activity = liveActivity {
-                await activity.end(nil, dismissalPolicy: .immediate)
-                liveActivity = nil
-            }
-            semaphore.signal()
+        guard let activity = liveActivity else { return }
+        liveActivity = nil
+        // Blocks so the end can land before the process dies. Detached because a main-actor task
+        // can't run while this blocks the main thread, and bounded because the watchdog kills at 5s.
+        let ended = DispatchSemaphore(value: 0)
+        Task.detached {
+            await activity.end(nil, dismissalPolicy: .immediate)
+            ended.signal()
         }
-        semaphore.wait()
+        _ = ended.wait(timeout: .now() + 2)
     }
 
     deinit {
