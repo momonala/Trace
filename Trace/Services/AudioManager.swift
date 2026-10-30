@@ -20,7 +20,7 @@ class AudioManager {
     private func setupAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
             Self.logger.info("Audio session setup complete")
         } catch {
@@ -116,6 +116,42 @@ class AudioManager {
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance()
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleMediaServicesReset),
+            name: AVAudioSession.mediaServicesWereResetNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleInterruption(_ notification: Notification) {
+        guard let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: rawType)
+        else { return }
+        switch type {
+        case .began:
+            Self.logger.warning("Audio interrupted")
+        case .ended:
+            Self.logger.info("Audio interruption ended, resuming")
+            startPlayingInBackground()
+        @unknown default:
+            break
+        }
+    }
+
+    @objc private func handleMediaServicesReset() {
+        Self.logger.warning("Media services were reset, rebuilding audio")
+        setupAudioSession()
+        setupAudioPlayer()
+        startPlayingInBackground()
     }
     
     @objc private func handleAppDidEnterBackground() {
@@ -136,8 +172,16 @@ class AudioManager {
             return
         }
         
-        audioPlayer?.play()
-        Self.logger.info("Started continuous background audio")
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            Self.logger.error("Failed to activate audio session: \(error.localizedDescription)")
+        }
+        if audioPlayer?.play() == true {
+            Self.logger.info("Started continuous background audio")
+        } else {
+            Self.logger.error("Background audio did not start, iOS will suspend the app")
+        }
     }
     
     func stopPlayingInBackground() {
