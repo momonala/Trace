@@ -11,6 +11,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     /// Read by UIKit on every rotation. Portrait until the Live tab says otherwise.
     static var supportedOrientations: UIInterfaceOrientationMask = .portrait
 
+    /// A background relaunch (e.g. for a location event) builds no SwiftUI views, so the
+    /// tracking pipeline has to be started here rather than from the first view that touches it.
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        _ = LocationManager.shared
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?

@@ -10,7 +10,8 @@ class AudioManager {
 
     private let queue = DispatchQueue(label: "org.mnalavadi.Trace.audio")
     private var audioPlayer: AVAudioPlayer?
-    private var isInBackground = false
+    /// Assumed until the first `didBecomeActive`: a background launch never posts `didEnterBackground`.
+    private var isInBackground = true
 
     private init() {
         setupNotificationObservers()
@@ -55,8 +56,8 @@ class AudioManager {
 
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleAppWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
+            selector: #selector(handleAppDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
 
@@ -105,8 +106,8 @@ class AudioManager {
         startPlayingInBackground()
     }
 
-    @objc private func handleAppWillEnterForeground() {
-        Self.logger.info("App entering foreground mode")
+    @objc private func handleAppDidBecomeActive() {
+        Self.logger.info("App became active")
         queue.async { [self] in isInBackground = false }
         stopPlayingInBackground()
     }
