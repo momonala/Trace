@@ -94,3 +94,6 @@ static/*.html
 .ipython/
 .cursor/
 .claude/
+
+# Xcode per-user state
+xcuserdata/
