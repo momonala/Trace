@@ -21,18 +21,18 @@ class LoggerUtil {
     }
 
     func debug(_ message: String) {
-        logger.debug("\(self.timestamp) 🔍 [\(self.category)] \(message)")
+        logger.debug("\(self.timestamp) [\(self.category)] \(message)")
     }
 
     func info(_ message: String) {
-        logger.info("\(self.timestamp) ✅ [\(self.category)] \(message)")
+        logger.info("\(self.timestamp) [\(self.category)] \(message)")
     }
 
     func warning(_ message: String) {
-        logger.warning("\(self.timestamp) ⚠️ [\(self.category)] \(message)")
+        logger.warning("\(self.timestamp) [\(self.category)] \(message)")
     }
 
     func error(_ message: String) {
-        logger.error("\(self.timestamp) 🚨 [\(self.category)] \(message)")
+        logger.error("\(self.timestamp) [\(self.category)] \(message)")
     }
 }

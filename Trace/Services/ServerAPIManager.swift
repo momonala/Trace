@@ -225,7 +225,6 @@ class ServerAPIManager {
             }
 
             if (200...299).contains(httpResponse.statusCode) {
-                // Self.logger.info("💓 Heartbeat sent successfully")
                 Task { @MainActor in
                     LocationManager.shared.updateLastHeartbeatTimestamp(Date())
                 }

@@ -401,7 +401,6 @@ class LocationManager: NSObject {
 
         Task {
             await activity.update(ActivityContent(state: contentState, staleDate: nil), alertConfiguration: nil)
-            // Self.logger.info("📍 Updated Live Activity")
         }
     }
 
