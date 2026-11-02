@@ -2,21 +2,24 @@ import Foundation
 import AVFoundation
 import UIKit
 
-/// Manages audio playback to keep app alive in background
+/// Manages audio playback to keep app alive in background.
+/// `audioPlayer` and `isInBackground` are only touched on `queue`.
 class AudioManager {
     static let shared = AudioManager()
     private static let logger = LoggerUtil(category: "AudioManager")
-    
+
+    private let queue = DispatchQueue(label: "org.mnalavadi.Trace.audio")
     private var audioPlayer: AVAudioPlayer?
     private var isInBackground = false
-    private let volume: Float = 0.0
 
     private init() {
-        setupAudioSession()
-        setupAudioPlayer()
         setupNotificationObservers()
+        queue.async { [self] in
+            setupAudioSession()
+            setupAudioPlayer()
+        }
     }
-    
+
     private func setupAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
@@ -27,81 +30,21 @@ class AudioManager {
             Self.logger.error("Failed to set up audio session: \(error.localizedDescription)")
         }
     }
-    
+
     private func setupAudioPlayer() {
-        // Create a sine wave
-        let sampleRate = 44100.0
-        let duration = 1.0  // 1 second
-        let frequency = 440.0  // A4 note
-        let numSamples = Int(duration * sampleRate)
-        
-        // Create an audio format
-        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
-        
-        // Create a buffer
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(numSamples)) else {
-            Self.logger.error("Failed to create audio buffer")
+        guard let url = Bundle.main.url(forResource: "silence", withExtension: "caf") else {
+            Self.logger.error("silence.caf missing from app bundle")
             return
         }
-        
-        // Fill the buffer with a sine wave
-        let data = buffer.floatChannelData?[0]
-        buffer.frameLength = AVAudioFrameCount(numSamples)
-        
-        for i in 0..<numSamples {
-            let time = Double(i) / sampleRate
-            data?[i] = Float(0.7 * sin(2.0 * .pi * frequency * time))
-        }
-        
-        // Convert buffer to Data
-        var audioFormat = AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: 4,
-            mFramesPerPacket: 1,
-            mBytesPerFrame: 4,
-            mChannelsPerFrame: 1,
-            mBitsPerChannel: 32,
-            mReserved: 0
-        )
-        
-        var audioFile: ExtAudioFileRef?
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("test_tone.wav")
-        
-        // Create audio file
-        guard ExtAudioFileCreateWithURL(
-            tempURL as CFURL,
-            kAudioFileWAVEType,
-            &audioFormat,
-            nil,
-            AudioFileFlags.eraseFile.rawValue,
-            &audioFile
-        ) == noErr else {
-            Self.logger.error("Failed to create audio file")
-            return
-        }
-        
-        guard let audioFile = audioFile else { return }
-        
-        // Write buffer to file
-        var asbd = format.streamDescription.pointee
-        ExtAudioFileSetProperty(audioFile, kExtAudioFileProperty_ClientDataFormat, UInt32(MemoryLayout<AudioStreamBasicDescription>.size), &asbd)
-        
-        let frames = buffer.frameLength
-        ExtAudioFileWrite(audioFile, frames, buffer.audioBufferList)
-        ExtAudioFileDispose(audioFile)
-        
         do {
-            audioPlayer = try AVAudioPlayer(contentsOf: tempURL)
-            audioPlayer?.numberOfLoops = -1  // Loop indefinitely
-            audioPlayer?.volume = volume
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.numberOfLoops = -1
             Self.logger.info("Audio player setup complete")
         } catch {
             Self.logger.error("Failed to create audio player: \(error.localizedDescription)")
         }
     }
-    
+
     private func setupNotificationObservers() {
         NotificationCenter.default.addObserver(
             self,
@@ -109,7 +52,7 @@ class AudioManager {
             name: UIApplication.didEnterBackgroundNotification,
             object: nil
         )
-        
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppWillEnterForeground),
@@ -149,48 +92,49 @@ class AudioManager {
 
     @objc private func handleMediaServicesReset() {
         Self.logger.warning("Media services were reset, rebuilding audio")
-        setupAudioSession()
-        setupAudioPlayer()
+        queue.async { [self] in
+            setupAudioSession()
+            setupAudioPlayer()
+        }
         startPlayingInBackground()
     }
-    
+
     @objc private func handleAppDidEnterBackground() {
         Self.logger.info("App entered background mode")
-        isInBackground = true
+        queue.async { [self] in isInBackground = true }
         startPlayingInBackground()
     }
-    
+
     @objc private func handleAppWillEnterForeground() {
         Self.logger.info("App entering foreground mode")
-        isInBackground = false
+        queue.async { [self] in isInBackground = false }
         stopPlayingInBackground()
     }
-    
+
     func startPlayingInBackground() {
-        guard isInBackground else {
-            Self.logger.info("Not starting audio - app is in foreground")
-            return
-        }
-        
-        do {
-            try AVAudioSession.sharedInstance().setActive(true)
-        } catch {
-            Self.logger.error("Failed to activate audio session: \(error.localizedDescription)")
-        }
-        if audioPlayer?.play() == true {
-            Self.logger.info("Started continuous background audio")
-        } else {
-            Self.logger.error("Background audio did not start, iOS will suspend the app")
+        queue.async { [self] in
+            guard isInBackground else {
+                Self.logger.info("Not starting audio - app is in foreground")
+                return
+            }
+
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                Self.logger.error("Failed to activate audio session: \(error.localizedDescription)")
+            }
+            if audioPlayer?.play() == true {
+                Self.logger.info("Started continuous background audio")
+            } else {
+                Self.logger.error("Background audio did not start, iOS will suspend the app")
+            }
         }
     }
-    
+
     func stopPlayingInBackground() {
-        audioPlayer?.stop()
-        Self.logger.info("Stopped background audio")
+        queue.async { [self] in
+            audioPlayer?.stop()
+            Self.logger.info("Stopped background audio")
+        }
     }
-    
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-        stopPlayingInBackground()
-    }
-} 
+}

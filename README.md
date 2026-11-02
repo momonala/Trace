@@ -14,7 +14,7 @@ The app doesn't run GPS continuously. CoreMotion monitors device activity at all
 
 ### Background Operation
 
-iOS suspends background apps aggressively. To keep the tracking pipeline alive, Trace plays a silent audio stream (volume 0, 440Hz sine wave) via `AVAudioSession`'s `.playback` category, which holds an audio background mode entitlement. This is a well-known technique in location tracking apps not distributed through the App Store. The audio session pauses when the app is foregrounded to avoid unnecessary drain.
+iOS suspends background apps aggressively. To keep the tracking pipeline alive, Trace loops a bundled silent audio file (`Trace/Resources/silence.caf`) via `AVAudioSession`'s `.playback` category, which holds an audio background mode entitlement. This is a well-known technique in location tracking apps not distributed through the App Store. The audio session pauses when the app is foregrounded to avoid unnecessary drain.
 
 ### Data Pipeline
 
@@ -107,7 +107,7 @@ The app is built around three singleton service classes, all using Swift's `@Obs
 - **`ServerAPIManager`** — Owns the upload queue. Creates per-minute `HourlyFile` batches, manages the auto-upload timer, and sends heartbeats to the server.
 - **`HealthManager`** — Queries HealthKit for today's step count, calories, distance, and flights (foreground + 10-minute timer).
 - **`HealthSyncManager`** — Uploads raw HealthKit samples to `/ios-dump` on foreground, manual upload, and every 10 minutes; pulls `/health-data` after each scheduled run.
-- **`AudioManager`** — Generates and loops a silent WAV file to hold the audio background mode.
+- **`AudioManager`** — Loops the bundled `silence.caf` to hold the audio background mode.
 
 Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persisted to `UserDefaults` via `didSet` and restored on launch.
 

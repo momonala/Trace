@@ -302,16 +302,19 @@ class ServerAPIManager {
     }
 
     private func loadQueuedFilesCount() async {
-        let context = PersistenceController.shared.container.viewContext
-        let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
-        if let current = currentHourlyFile {
-            request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", current)
-        } else {
-            request.predicate = NSPredicate(format: "uploadStatus != %@ AND points.@count > 0", "completed")
-        }
+        let context = PersistenceController.shared.newBackgroundContext()
+        let currentID = currentHourlyFile?.objectID
 
         do {
-            queuedFiles = try context.count(for: request)
+            queuedFiles = try await context.perform {
+                let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
+                if let currentID {
+                    request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", currentID)
+                } else {
+                    request.predicate = NSPredicate(format: "uploadStatus != %@ AND points.@count > 0", "completed")
+                }
+                return try context.count(for: request)
+            }
         } catch {
             Self.logger.error("Error counting queued files: \(error.localizedDescription)")
         }
