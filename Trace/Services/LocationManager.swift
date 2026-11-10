@@ -52,6 +52,7 @@ private enum TrackingState {
 class LocationManager: NSObject {
     static let shared = LocationManager()
     private static let logger = LoggerUtil(category: "LocationManager")
+    private static let liveActivityMinUpdateInterval: TimeInterval = 3
 
     private let locationManager = CLLocationManager()
     private let motionManager = CMMotionActivityManager()
@@ -60,6 +61,7 @@ class LocationManager: NSObject {
 
     // Live Activity
     private var liveActivity: Activity<TraceWidgetsAttributes>?
+    private var lastLiveActivityUpdate: Date?
 
     // Non-persisted properties
     var currentLocation: CLLocation?
@@ -87,6 +89,7 @@ class LocationManager: NSObject {
         didSet {
             guard oldValue.usesContinuousGPS != trackingState.usesContinuousGPS else { return }
             applyGPSMode()
+            updateLiveActivity()
         }
     }
     private var pendingTransition: Task<Void, Never>?
@@ -375,8 +378,9 @@ class LocationManager: NSObject {
         )
     }
 
-    private func updateLiveActivity() {
+    func updateLiveActivity() {
         guard let activity = liveActivity else { return }
+        lastLiveActivityUpdate = Date()
 
         let contentState = makeLiveActivityContentState()
 
@@ -385,25 +389,16 @@ class LocationManager: NSObject {
         }
     }
 
-    private func endLiveActivity() {
-        guard let activity = liveActivity else { return }
-
-        Task {
-            await activity.end(nil, dismissalPolicy: .immediate)
-            liveActivity = nil
-            Self.logger.info("Ended Live Activity")
-        }
-    }
-
-    @MainActor
-    func triggerLiveActivityUpdate() {
+    private func updateLiveActivityIfDue() {
+        let sinceLastUpdate = Date().timeIntervalSince(lastLiveActivityUpdate ?? .distantPast)
+        guard sinceLastUpdate >= Self.liveActivityMinUpdateInterval else { return }
         updateLiveActivity()
     }
 
     @MainActor
     func updateLastHeartbeatTimestamp(_ date: Date) {
         lastHeartbeatTimestamp = date
-        triggerLiveActivityUpdate()
+        updateLiveActivityIfDue()
     }
 
     public func restartLiveActivity() {
@@ -420,6 +415,7 @@ extension LocationManager: @preconcurrency CLLocationManagerDelegate {
         guard let location = locations.last else { return }
 
         currentLocation = location
+        updateLiveActivityIfDue()
 
         guard currentMotionType.isMoving else { return }
         guard location.horizontalAccuracy <= minimumAccuracy else { return }
@@ -457,6 +453,6 @@ extension LocationManager: @preconcurrency CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         self.error = error
         Self.logger.error("Location manager error: \(error.localizedDescription)")
-        updateLiveActivity()
+        updateLiveActivityIfDue()
     }
 }
