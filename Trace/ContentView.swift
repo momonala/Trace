@@ -534,21 +534,6 @@ struct ContentView: View {
                 .tag(3)
         }
         .onAppear {
-            // Set tab bar appearance
-            let appearance = UITabBarAppearance()
-            appearance.configureWithTransparentBackground()
-            appearance.backgroundColor = UIColor.black.withAlphaComponent(0.7)
-            
-            appearance.stackedLayoutAppearance.selected.iconColor = .white
-            appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.white]
-            appearance.stackedLayoutAppearance.normal.iconColor = .white.withAlphaComponent(0.7)
-            appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.white.withAlphaComponent(0.7)]
-            
-            UITabBar.appearance().standardAppearance = appearance
-            if #available(iOS 15.0, *) {
-                UITabBar.appearance().scrollEdgeAppearance = appearance
-            }
-            
             locationManager.requestPermissions()
             autoFocusOnStartupIfNeeded()
             OrientationLock.apply(orientationMask(for: selectedTab))

@@ -14,19 +14,6 @@ private enum LookbackPreset: Int, CaseIterable, Identifiable {
     }
 }
 
-private enum StatsStyle {
-    static let background = Color.black
-    static let card = Color.white.opacity(0.075)
-    static let raisedCard = Color.white.opacity(0.12)
-    static let separator = Color.white.opacity(0.14)
-    static let primaryText = Color.white
-    static let secondaryText = Color.white.opacity(0.68)
-    static let tertiaryText = Color.white.opacity(0.48)
-    static let accent = Color.orange
-    static let cardRadius: CGFloat = 18
-    static let controlRadius: CGFloat = 12
-}
-
 struct StatsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var apiManager = ServerAPIManager.shared
@@ -36,7 +23,6 @@ struct StatsView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showCustomLookbackSheet = false
-    @State private var customLookbackInput = "7"
     @State private var selectedRowID: String?
     @State private var wasInBackground = false
     @State private var sortColumn: StatsTableColumn?
@@ -101,7 +87,6 @@ struct StatsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    controlsSection
                     chartSection
                     tableSection
                 }
@@ -109,20 +94,25 @@ struct StatsView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 24)
             }
-            .background(StatsStyle.background.ignoresSafeArea())
-            .foregroundColor(StatsStyle.primaryText)
-            .toolbar(.hidden, for: .navigationBar)
+            .background(TraceStyle.background.ignoresSafeArea())
+            .foregroundStyle(TraceStyle.primaryText)
+            .navigationTitle("Stats")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { lookbackMenu }
+                ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                ToolbarItem(placement: .topBarTrailing) { traceMenu }
+            }
             .refreshable {
                 await loadStats()
             }
             .sheet(isPresented: $showCustomLookbackSheet) {
-                CustomLookbackSheet(
-                    value: $customLookbackInput,
-                    onApply: applyCustomLookback
-                )
+                CustomLookbackSheet(days: $lookbackDays)
             }
             .task {
                 await loadStats()
+            }
+            .onChange(of: lookbackDays) { _, _ in
+                Task { await loadStats() }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background {
@@ -133,61 +123,36 @@ struct StatsView: View {
                 Task { await loadStats() }
             }
         }
+        .environment(\.colorScheme, .dark)
     }
 
-    private var controlsSection: some View {
-        HStack(spacing: 8) {
-            Menu {
+    private var lookbackMenu: some View {
+        Menu {
+            Picker("Range", selection: $lookbackDays) {
                 ForEach(LookbackPreset.allCases) { preset in
-                    Button(preset.label) {
-                        lookbackDays = preset.rawValue
-                        Task { await loadStats() }
-                    }
+                    Text(preset.label).tag(preset.rawValue)
                 }
-                Button("Custom…") {
-                    customLookbackInput = "\(lookbackDays)"
-                    showCustomLookbackSheet = true
-                }
-            } label: {
-                compactControlLabel("\(lookbackDays)d", systemImage: "calendar")
             }
-
-            Menu {
-                ForEach(StatTrace.allTraces) { trace in
-                    Button(trace.label) {
-                        selectedTrace = trace
-                    }
-                }
-            } label: {
-                compactControlLabel(selectedTrace.compactLabel, systemImage: "chart.xyaxis.line")
+            Button("Custom…", systemImage: "slider.horizontal.3") {
+                showCustomLookbackSheet = true
             }
-
-            Spacer(minLength: 0)
-
-            if isLoading {
-                ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: StatsStyle.secondaryText))
-                    .scaleEffect(0.7)
-            }
+        } label: {
+            Label("\(lookbackDays)d", systemImage: "calendar")
+                .labelStyle(.titleAndIcon)
         }
-        .statsCard(padding: 8)
     }
 
-    private func compactControlLabel(_ title: String, systemImage: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: systemImage)
-                .font(.caption2)
-            Text(title)
-                .font(.footnote.weight(.medium))
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
+    private var traceMenu: some View {
+        Menu {
+            Picker("Metric", selection: $selectedTrace) {
+                ForEach(StatTrace.allTraces) { trace in
+                    Text(trace.label).tag(trace)
+                }
+            }
+        } label: {
+            Label(selectedTrace.compactLabel, systemImage: "chart.xyaxis.line")
+                .labelStyle(.titleAndIcon)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .foregroundStyle(StatsStyle.primaryText)
-        .background(StatsStyle.raisedCard)
-        .clipShape(RoundedRectangle(cornerRadius: StatsStyle.controlRadius, style: .continuous))
     }
 
     @ViewBuilder
@@ -202,14 +167,14 @@ struct StatsView: View {
                 HStack {
                     Spacer()
                     ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: StatsStyle.primaryText))
+                        .progressViewStyle(CircularProgressViewStyle(tint: TraceStyle.primaryText))
                     Spacer()
                 }
                 .frame(height: 188)
             } else if let errorMessage {
-                chartMessage(errorMessage, color: StatsStyle.accent)
+                chartMessage(errorMessage, color: TraceStyle.accent)
             } else if chartPoints.isEmpty {
-                chartMessage("No data for this range.", color: StatsStyle.secondaryText)
+                chartMessage("No data for this range.", color: TraceStyle.secondaryText)
             } else {
                 Chart(chartPoints) { point in
                     if selectedTrace.usesLineMark {
@@ -217,20 +182,20 @@ struct StatsView: View {
                             x: .value("Date", point.displayDate),
                             y: .value(selectedTrace.label, point.value)
                         )
-                        .foregroundStyle(StatsStyle.accent)
+                        .foregroundStyle(TraceStyle.accent)
                         .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                         PointMark(
                             x: .value("Date", point.displayDate),
                             y: .value(selectedTrace.label, point.value)
                         )
-                        .foregroundStyle(StatsStyle.accent)
+                        .foregroundStyle(TraceStyle.accent)
                         .symbolSize(18)
                     } else {
                         BarMark(
                             x: .value("Date", point.displayDate),
                             y: .value(selectedTrace.label, point.value)
                         )
-                        .foregroundStyle(StatsStyle.accent.gradient)
+                        .foregroundStyle(TraceStyle.accent.gradient)
                         .cornerRadius(3)
                     }
                 }
@@ -238,16 +203,16 @@ struct StatsView: View {
                     AxisMarks(values: chartXAxisLabels) { _ in
                         AxisValueLabel()
                             .font(.caption2)
-                            .foregroundStyle(StatsStyle.secondaryText)
+                            .foregroundStyle(TraceStyle.secondaryText)
                     }
                 }
                 .chartYAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
                         AxisGridLine()
-                            .foregroundStyle(StatsStyle.separator)
+                            .foregroundStyle(TraceStyle.separator)
                         AxisValueLabel()
                             .font(.caption2)
-                            .foregroundStyle(StatsStyle.secondaryText)
+                            .foregroundStyle(TraceStyle.secondaryText)
                     }
                 }
                 .chartPlotStyle { plotArea in
@@ -268,22 +233,22 @@ struct StatsView: View {
 
             if isLoading {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: StatsStyle.primaryText))
+                    .progressViewStyle(CircularProgressViewStyle(tint: TraceStyle.primaryText))
             } else if dailyStats.isEmpty {
                 Text("No rows to show.")
                     .font(.caption)
-                    .foregroundColor(StatsStyle.secondaryText)
+                    .foregroundColor(TraceStyle.secondaryText)
             } else {
                 ScrollView(.horizontal, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 0) {
                         tableHeader
                         tableTotalsRow
                         Divider()
-                            .background(StatsStyle.separator)
+                            .background(TraceStyle.separator)
                         ForEach(displayedStats) { row in
                             tableRow(row)
                             Divider()
-                                .background(StatsStyle.separator)
+                                .background(TraceStyle.separator)
                         }
                     }
                     .padding(.vertical, 4)
@@ -303,7 +268,7 @@ struct StatsView: View {
             if let subtitle {
                 Text(subtitle)
                     .font(.caption2)
-                    .foregroundColor(StatsStyle.secondaryText)
+                    .foregroundColor(TraceStyle.secondaryText)
             }
         }
     }
@@ -323,7 +288,7 @@ struct StatsView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 7)
-        .background(StatsStyle.raisedCard)
+        .background(TraceStyle.raisedCard)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
@@ -351,7 +316,7 @@ struct StatsView: View {
         if let motionType = column.motionTypeKey {
             return MotionTypeDisplay.color(for: motionType)
         }
-        return sortColumn == column ? StatsStyle.accent : StatsStyle.secondaryText
+        return sortColumn == column ? .accentColor : TraceStyle.secondaryText
     }
 
     private func toggleSort(for column: StatsTableColumn) {
@@ -376,7 +341,7 @@ struct StatsView: View {
         }
         .padding(.vertical, 7)
         .padding(.horizontal, 6)
-        .background(StatsStyle.accent.opacity(0.13))
+        .background(TraceStyle.accent.opacity(0.13))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
@@ -394,7 +359,7 @@ struct StatsView: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 6)
-        .background(isSelected ? StatsStyle.accent.opacity(0.18) : Color.clear)
+        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture {
@@ -466,7 +431,7 @@ struct StatsView: View {
             .font(monospaced ? .caption.monospacedDigit() : .caption)
             .fontWeight(emphasized ? .semibold : .regular)
             .foregroundColor(
-                color ?? (emphasized ? StatsStyle.primaryText : StatsStyle.primaryText.opacity(0.9))
+                color ?? (emphasized ? TraceStyle.primaryText : TraceStyle.primaryText.opacity(0.9))
             )
             .fixedSize(horizontal: true, vertical: false)
             .frame(minWidth: width, alignment: .leading)
@@ -485,36 +450,43 @@ struct StatsView: View {
             errorMessage = error.localizedDescription
         }
     }
-
-    private func applyCustomLookback() {
-        guard let days = Int(customLookbackInput.trimmingCharacters(in: .whitespacesAndNewlines)),
-              (1...366).contains(days) else {
-            errorMessage = "Enter a whole number between 1 and 366."
-            return
-        }
-        lookbackDays = days
-        showCustomLookbackSheet = false
-        Task { await loadStats() }
-    }
 }
 
 private struct CustomLookbackSheet: View {
-    @Binding var value: String
-    let onApply: () -> Void
+    @Binding var days: Int
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var input: String
     @FocusState private var isFocused: Bool
+
+    init(days: Binding<Int>) {
+        _days = days
+        _input = State(initialValue: "\(days.wrappedValue)")
+    }
+
+    private var parsedDays: Int? {
+        guard let value = Int(input.trimmingCharacters(in: .whitespacesAndNewlines)),
+              (1...366).contains(value) else { return nil }
+        return value
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Days (1–366)", text: $value)
+                TextField("Days (1–366)", text: $input)
                     .keyboardType(.numberPad)
                     .focused($isFocused)
             }
-            .navigationTitle("Custom lookback")
+            .navigationTitle("Custom Range")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply", action: onApply)
+                    Button("Apply") {
+                        guard let parsedDays else { return }
+                        days = parsedDays
+                        dismiss()
+                    }
+                    .disabled(parsedDays == nil)
                 }
             }
             .onAppear {
@@ -530,10 +502,10 @@ private extension View {
     func statsCard(padding: CGFloat = 12) -> some View {
         self
             .padding(padding)
-            .background(StatsStyle.card)
-            .clipShape(RoundedRectangle(cornerRadius: StatsStyle.cardRadius, style: .continuous))
+            .background(TraceStyle.card)
+            .clipShape(RoundedRectangle(cornerRadius: TraceStyle.cardRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: StatsStyle.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: TraceStyle.cardRadius, style: .continuous)
                     .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
             }
     }

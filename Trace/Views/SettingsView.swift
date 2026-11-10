@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Bindable private var locationManager = LocationManager.shared
     @State private var healthSync = HealthSyncManager.shared
     @State private var showingAlert = false
+    @State private var alertTitle = ""
     @State private var alertMessage = ""
     @State private var isTestingAPI = false
     @State private var currentTime = Date()
@@ -15,9 +16,9 @@ struct SettingsView: View {
     private let motionDurationOptions = [0.0, 1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0]
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
-                Section(header: Text("Location Settings")) {
+                Section("Location") {
                     Picker("Required Motion Duration", selection: $locationManager.requiredMotionSeconds) {
                         ForEach(motionDurationOptions, id: \.self) { seconds in
                             if seconds == 0 {
@@ -29,17 +30,15 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Button(action: {
+                    Button("Restart Live Activity") {
                         locationManager.restartLiveActivity()
-                        alertMessage = "Live Activity restarted!"
+                        alertTitle = "Live Activity"
+                        alertMessage = "Live Activity restarted."
                         showingAlert = true
-                    }) {
-                        Text("Restart Live Activity")
-                            .foregroundColor(.blue)
                     }
                 }
 
-                Section(header: Text("Map Settings")) {
+                Section("Map") {
                     Picker("Minimum Accuracy", selection: $locationManager.minimumAccuracy) {
                         ForEach(accuracyOptions, id: \.self) { meters in
                             Text("\(Int(meters))m").tag(meters)
@@ -67,58 +66,46 @@ struct SettingsView: View {
                         .help("Fetch all historical trips visible in the current map view, ignoring History Lookback.")
                 }
 
-                Section(header: Text("Upload Settings")) {
+                Section("Sync") {
                     Toggle("Auto-Upload Files", isOn: $fileManager.isAutoUploadEnabled)
                         .help("Automatically attempts to upload files every minute when new files are created")
 
                     if let lastUpload = fileManager.lastUploadAttempt {
-                        HStack {
-                            Text("Last Sent")
-                            Spacer()
-                            Text(lastUpload.formatted(date: .numeric, time: .shortened))
-                                .font(.system(.caption, design: .monospaced))
-                            Text("(\(timeSinceLastUpload(lastUpload)))")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
-                        }
+                        LabeledContent("Last Sent") { syncTimestamp(lastUpload) }
                     }
 
-                    HStack {
-                        Text("Last Health Sync")
-                        Spacer()
+                    LabeledContent("Last Health Sync") {
                         if let lastSync = healthSync.lastSyncAt {
-                            Text(lastSync.formatted(date: .numeric, time: .shortened))
-                                .font(.system(.caption, design: .monospaced))
-                            Text("(\(timeSinceLastUpload(lastSync)))")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
+                            syncTimestamp(lastSync)
                         } else {
                             Text("Never")
                                 .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
 
-                Section(header: Text("Server Settings")) {
-                    HStack {
+                Section("Server") {
+                    LabeledContent("URL") {
                         Text(fileManager.serverBaseURL)
-                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
 
                     Button(action: testAPI) {
-                        if isTestingAPI {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                        } else {
+                        HStack {
                             Text("Test Connection")
+                            Spacer()
+                            if isTestingAPI {
+                                ProgressView()
+                            }
                         }
                     }
                     .disabled(isTestingAPI)
                 }
             }
             .navigationTitle("Settings")
-            .alert("API Test", isPresented: $showingAlert) {
+            .alert(alertTitle, isPresented: $showingAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(alertMessage)
@@ -127,10 +114,21 @@ struct SettingsView: View {
                 currentTime = Date()
             }
         }
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func syncTimestamp(_ date: Date) -> some View {
+        HStack(spacing: 4) {
+            Text(date.formatted(date: .numeric, time: .shortened))
+                .foregroundStyle(.primary)
+            Text("(\(timeSinceLastUpload(date)))")
+        }
+        .font(.system(.caption, design: .monospaced))
     }
 
     private func testAPI() {
         isTestingAPI = true
+        alertTitle = "Connection Test"
 
         Task {
             do {
@@ -172,8 +170,6 @@ struct SettingsView: View {
         }
         return String(format: "%02dh %02dm", hours, minutes)
     }
-
-
 }
 
 #Preview {
