@@ -282,10 +282,8 @@ struct ContentView: View {
     @State private var hasAutoFocusedOnStartup = false
     @State private var mapOverlay = MapOverlay.hidden
     @State private var toasts: [Toast] = []
-    @State private var showMotionStatsOverlay = false
-    @State private var motionStats: MotionStats?
-    @State private var motionStatsError: String?
-    @State private var isLoadingMotionStats = false
+    @State private var motionStatsLoad: MotionStatsLoad?
+    @State private var motionStatsTask: Task<Void, Never>?
     @State private var showSnoozeSheet = false
 
     /// Landscape iPhone. Only the Live tab ever reaches this; the rest are locked to portrait.
@@ -386,18 +384,23 @@ struct ContentView: View {
     }
 
     private func showMotionStats() {
-        showMotionStatsOverlay = true
-        motionStats = nil
-        motionStatsError = nil
-        isLoadingMotionStats = true
-        Task {
-            defer { isLoadingMotionStats = false }
+        motionStatsTask?.cancel()
+        motionStatsLoad = .loading
+        motionStatsTask = Task {
+            let result: MotionStatsLoad
             do {
-                motionStats = try await fileManager.fetchMotionStats(for: "today")
+                result = .loaded(try await fileManager.fetchMotionStats(for: "today"))
             } catch {
-                motionStatsError = error.localizedDescription
+                result = .failed(error.localizedDescription)
             }
+            guard !Task.isCancelled else { return }
+            motionStatsLoad = result
         }
+    }
+
+    private func dismissMotionStats() {
+        motionStatsTask?.cancel()
+        motionStatsLoad = nil
     }
 
     var body: some View {
@@ -458,12 +461,12 @@ struct ContentView: View {
                             .disabled(mapOverlay.isLoading)
 
                             Button(action: showMotionStats) {
-                                MapFloatingButton(isBusy: isLoadingMotionStats) {
+                                MapFloatingButton(isBusy: motionStatsLoad?.isLoading ?? false) {
                                     Image(systemName: "figure.walk.motion")
                                         .foregroundColor(.white)
                                 }
                             }
-                            .disabled(isLoadingMotionStats)
+                            .disabled(motionStatsLoad?.isLoading ?? false)
 
                             Button(action: { showSnoozeSheet = true }) {
                                 MapFloatingButton(isBusy: false) {
@@ -480,17 +483,8 @@ struct ContentView: View {
                 }
                 .padding(.bottom, isLandscape ? 8 : 0)
 
-                if showMotionStatsOverlay {
-                    MotionStatsOverlay(
-                        stats: motionStats,
-                        isLoading: isLoadingMotionStats,
-                        errorMessage: motionStatsError,
-                        onDismiss: {
-                            showMotionStatsOverlay = false
-                            motionStats = nil
-                            motionStatsError = nil
-                        }
-                    )
+                if let motionStatsLoad {
+                    MotionStatsOverlay(load: motionStatsLoad, onDismiss: dismissMotionStats)
                 }
             }
             .sheet(isPresented: $showSnoozeSheet) {
@@ -623,10 +617,13 @@ private struct SnoozeSheet: View {
 
 private struct MotionStatsOverlay: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    let stats: MotionStats?
-    let isLoading: Bool
-    let errorMessage: String?
+    let load: MotionStatsLoad
     let onDismiss: () -> Void
+
+    private var stats: MotionStats? {
+        guard case .loaded(let stats) = load else { return nil }
+        return stats
+    }
 
     private var isLandscape: Bool { verticalSizeClass == .compact }
 
@@ -702,7 +699,8 @@ private struct MotionStatsOverlay: View {
                 }
             }
 
-            if isLoading {
+            switch load {
+            case .loading:
                 HStack {
                     Spacer()
                     ProgressView()
@@ -710,11 +708,11 @@ private struct MotionStatsOverlay: View {
                     Spacer()
                 }
                 .padding(.vertical, 24)
-            } else if let errorMessage {
-                Text(errorMessage)
+            case .failed(let message):
+                Text(message)
                     .font(.caption)
                     .foregroundColor(.orange)
-            } else if stats != nil {
+            case .loaded:
                 ForEach(Array(metricRows.enumerated()), id: \.offset) { _, row in
                     HStack(spacing: 16) {
                         ForEach(row, id: \.title) { metric in
@@ -978,6 +976,17 @@ struct StatsPanel: View {
         if hours > 0   { return String(format: "%02dh %02dm", hours, minutes) }
         if minutes > 0 { return String(format: "%dm %02ds", minutes, secs) }
         return "\(secs)s"
+    }
+}
+
+private enum MotionStatsLoad {
+    case loading
+    case loaded(MotionStats)
+    case failed(String)
+
+    var isLoading: Bool {
+        guard case .loading = self else { return false }
+        return true
     }
 }
 
