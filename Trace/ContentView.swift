@@ -542,15 +542,6 @@ struct ContentView: View {
                 _ = await (health, trail, sync)
             }
         }
-        // Add gesture recognizer to disable tracking when user interacts with map
-        .gesture(
-            DragGesture()
-                .onChanged { _ in
-                    if isMapTrackingEnabled {
-                        isMapTrackingEnabled = false
-                    }
-                }
-        )
     }
     
 }
