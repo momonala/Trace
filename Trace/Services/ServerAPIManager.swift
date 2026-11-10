@@ -164,7 +164,8 @@ class ServerAPIManager {
         }
 
         Task {
-            await loadQueuedFilesCount()
+            await deleteStaleEmptyFiles()
+            await refreshQueuedFilesCount()
             if isAutoUploadEnabled {
                 startAutoUploadTimer()
             }
@@ -260,13 +261,12 @@ class ServerAPIManager {
         hourlyFile.startTime = startOfMinute
         hourlyFile.endTime = endOfMinute
         hourlyFile.fileName = "trace_\(ISO8601DateFormatter().string(from: startOfMinute)).json"
+        // Required attribute in the Core Data model; its value is never read.
         hourlyFile.uploadStatus = "pending"
-        hourlyFile.retryCount = 0
 
         do {
             try context.save()
             currentHourlyFile = hourlyFile
-            queuedFiles += 1
             bufferSize = 0
         } catch {
             Self.logger.error("Error creating minute file: \(String(describing: error.localizedDescription))")
@@ -285,7 +285,9 @@ class ServerAPIManager {
         }
 
         await createNewHourlyFile(context: context, for: date)
-        return currentHourlyFile!
+        let file = currentHourlyFile!
+        await refreshQueuedFilesCount()
+        return file
     }
 
     private func updateBufferSize() async {
@@ -301,18 +303,23 @@ class ServerAPIManager {
         lastPointTime = Date()
     }
 
-    private func loadQueuedFilesCount() async {
+    private func queuedFilesPredicate() -> NSPredicate {
+        let hasPoints = NSPredicate(format: "points.@count > 0")
+        guard let current = currentHourlyFile else { return hasPoints }
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [
+            hasPoints,
+            NSPredicate(format: "self != %@", current.objectID),
+        ])
+    }
+
+    private func refreshQueuedFilesCount() async {
         let context = PersistenceController.shared.newBackgroundContext()
-        let currentID = currentHourlyFile?.objectID
+        let predicate = queuedFilesPredicate()
 
         do {
             queuedFiles = try await context.perform {
                 let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
-                if let currentID {
-                    request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", currentID)
-                } else {
-                    request.predicate = NSPredicate(format: "uploadStatus != %@ AND points.@count > 0", "completed")
-                }
+                request.predicate = predicate
                 return try context.count(for: request)
             }
         } catch {
@@ -320,7 +327,32 @@ class ServerAPIManager {
         }
     }
 
+    private func deleteStaleEmptyFiles() async {
+        let context = PersistenceController.shared.newBackgroundContext()
+        let cutoff = Date().addingTimeInterval(-3600)
+
+        do {
+            let deletedIDs = try await context.perform {
+                let request: NSFetchRequest<NSFetchRequestResult> = HourlyFile.fetchRequest()
+                request.predicate = NSPredicate(format: "points.@count == 0 AND startTime < %@", cutoff as NSDate)
+                let delete = NSBatchDeleteRequest(fetchRequest: request)
+                delete.resultType = .resultTypeObjectIDs
+                let result = try context.execute(delete) as? NSBatchDeleteResult
+                return result?.result as? [NSManagedObjectID] ?? []
+            }
+            guard !deletedIDs.isEmpty else { return }
+            NSManagedObjectContext.mergeChanges(
+                fromRemoteContextSave: [NSDeletedObjectsKey: deletedIDs],
+                into: [PersistenceController.shared.container.viewContext]
+            )
+            Self.logger.info("Deleted \(deletedIDs.count) empty minute files")
+        } catch {
+            Self.logger.error("Error deleting empty minute files: \(error.localizedDescription)")
+        }
+    }
+
     func uploadAllFiles() async {
+        guard !isUploading else { return }
         isUploading = true
         uploadError = nil
         defer { isUploading = false }
@@ -329,45 +361,30 @@ class ServerAPIManager {
 
         let context = PersistenceController.shared.container.viewContext
         let request: NSFetchRequest<HourlyFile> = HourlyFile.fetchRequest()
-        if let current = currentHourlyFile {
-            request.predicate = NSPredicate(format: "uploadStatus != %@ AND self != %@ AND points.@count > 0", "completed", current)
-        } else {
-            request.predicate = NSPredicate(format: "uploadStatus != %@ AND points.@count > 0", "completed")
-        }
+        request.predicate = queuedFilesPredicate()
         request.sortDescriptors = [NSSortDescriptor(keyPath: \HourlyFile.startTime, ascending: true)]
 
         do {
             let filesToUpload = try context.fetch(request)
             Self.logger.info("Found \(String(describing: filesToUpload.count)) files with points to upload")
 
-            if filesToUpload.isEmpty {
-                Self.logger.info("No files to upload")
-                return
-            }
-
             var hadError = false
             for file in filesToUpload {
-                if let error = await uploadFile(file) {
+                let points = file.points?.allObjects as? [LocationPoint] ?? []
+                if let error = await upload(points) {
                     uploadError = error
                     hadError = true
-                    file.retryCount += 1
-                    file.lastUploadAttempt = Date()
-                } else {
-                    file.uploadStatus = "completed"
-                    queuedFiles -= 1
-
-                    if let points = file.points {
-                        points.forEach { point in
-                            if let point = point as? LocationPoint {
-                                context.delete(point)
-                            }
-                        }
-                    }
+                    continue
                 }
+                points.forEach(context.delete)
                 try context.save()
+                if file.points?.count == 0, file != currentHourlyFile {
+                    context.delete(file)
+                    try context.save()
+                }
             }
 
-            if !hadError {
+            if !filesToUpload.isEmpty, !hadError {
                 Self.logger.info("Successfully processed all files")
                 lastUploadAttempt = Date()
             }
@@ -379,6 +396,8 @@ class ServerAPIManager {
                 userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 500"]
             )
         }
+
+        await refreshQueuedFilesCount()
     }
 
     func uploadHealthBatch(_ payload: HealthBatchPayload) async throws {
@@ -535,12 +554,11 @@ class ServerAPIManager {
         Self.logger.info("Alerts snoozed for \(minutes)m")
     }
 
-    private func uploadFile(_ file: HourlyFile) async -> Error? {
+    private func upload(_ points: [LocationPoint]) async -> Error? {
         guard let url = URL(string: apiEndpoint) else {
             return NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
         }
 
-        let points = file.points?.allObjects as? [LocationPoint] ?? []
         if points.isEmpty {
             Self.logger.warning("Skipping file with no points")
             return nil
