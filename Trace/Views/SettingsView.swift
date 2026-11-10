@@ -4,9 +4,7 @@ struct SettingsView: View {
     @Bindable private var fileManager = ServerAPIManager.shared
     @Bindable private var locationManager = LocationManager.shared
     @State private var healthSync = HealthSyncManager.shared
-    @State private var showingAlert = false
-    @State private var alertTitle = ""
-    @State private var alertMessage = ""
+    @State private var alert: SettingsAlert?
     @State private var isTestingAPI = false
     @State private var currentTime = Date()
 
@@ -32,9 +30,7 @@ struct SettingsView: View {
 
                     Button("Restart Live Activity") {
                         locationManager.restartLiveActivity()
-                        alertTitle = "Live Activity"
-                        alertMessage = "Live Activity restarted."
-                        showingAlert = true
+                        alert = SettingsAlert(title: "Live Activity", message: "Live Activity restarted.")
                     }
                 }
 
@@ -105,10 +101,10 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .alert(alertTitle, isPresented: $showingAlert) {
+            .alert(alert?.title ?? "", item: $alert) { _ in
                 Button("OK", role: .cancel) { }
-            } message: {
-                Text(alertMessage)
+            } message: { alert in
+                Text(alert.message)
             }
             .onReceive(timer) { _ in
                 currentTime = Date()
@@ -128,35 +124,30 @@ struct SettingsView: View {
 
     private func testAPI() {
         isTestingAPI = true
-        alertTitle = "Connection Test"
 
         Task {
+            let message: String
             do {
                 let (data, response) = try await URLSession.shared.data(from: ServerAPIManager.shared.statusURL)
-
-                isTestingAPI = false
-
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    alertMessage = "Invalid server response"
-                    showingAlert = true
-                    return
-                }
-
-                if (200...299).contains(httpResponse.statusCode) {
-                    if let statusString = String(data: data, encoding: .utf8) {
-                        alertMessage = "Connection successful!\nServer status: \(statusString)"
+                if let httpResponse = response as? HTTPURLResponse {
+                    if (200...299).contains(httpResponse.statusCode) {
+                        if let statusString = String(data: data, encoding: .utf8) {
+                            message = "Connection successful!\nServer status: \(statusString)"
+                        } else {
+                            message = "Connection successful!"
+                        }
                     } else {
-                        alertMessage = "Connection successful!"
+                        message = "Server error: HTTP \(httpResponse.statusCode)"
                     }
                 } else {
-                    alertMessage = "Server error: HTTP \(httpResponse.statusCode)"
+                    message = "Invalid server response"
                 }
             } catch {
-                alertMessage = "Connection failed: \(error.localizedDescription)"
+                message = "Connection failed: \(error.localizedDescription)"
             }
 
             isTestingAPI = false
-            showingAlert = true
+            alert = SettingsAlert(title: "Connection Test", message: message)
         }
     }
 
@@ -170,6 +161,11 @@ struct SettingsView: View {
         }
         return String(format: "%02dh %02dm", hours, minutes)
     }
+}
+
+private struct SettingsAlert {
+    let title: String
+    let message: String
 }
 
 #Preview {
