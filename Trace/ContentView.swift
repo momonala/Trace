@@ -853,7 +853,7 @@ struct StatsPanel: View {
     }
 
     private var motionField: some View {
-        StatsRow(title: "Motion", value: MotionTypeDisplay.emoji(for: locationManager.currentMotionType))
+        StatsRow(title: "Motion", value: MotionTypeDisplay.emoji(for: locationManager.currentMotionType.rawValue))
     }
 
     @ViewBuilder private var queueFields: some View {

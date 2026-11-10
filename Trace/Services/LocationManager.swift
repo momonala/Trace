@@ -11,6 +11,42 @@ struct MapBoundingBox {
     let maxLon: Double
 }
 
+enum MotionType: String {
+    case walking, running, cycling, automotive, stationary, unknown
+
+    init(_ activity: CMMotionActivity) {
+        self = activity.cycling ? .cycling
+            : activity.automotive ? .automotive
+            : activity.walking ? .walking
+            : activity.running ? .running
+            : activity.stationary ? .stationary
+            : .unknown
+    }
+
+    var isMoving: Bool { self != .stationary }
+}
+
+private enum TrackingState {
+    case idle
+    case arming
+    case tracking(since: Date)
+    case disarming(trackingSince: Date)
+
+    var usesContinuousGPS: Bool {
+        switch self {
+        case .idle, .arming: false
+        case .tracking, .disarming: true
+        }
+    }
+
+    var trackingSince: Date? {
+        switch self {
+        case .idle, .arming: nil
+        case .tracking(let since), .disarming(let since): since
+        }
+    }
+}
+
 @Observable
 @MainActor
 class LocationManager: NSObject {
@@ -27,9 +63,8 @@ class LocationManager: NSObject {
 
     // Non-persisted properties
     var currentLocation: CLLocation?
-    var isTracking = false
-    var currentMotionType: String = "stationary"
-    var isTrackingMotionType = false
+    var currentMotionType = MotionType.stationary
+    var isTracking: Bool { trackingState.usesContinuousGPS }
     var error: Error?
     var lastHeartbeatTimestamp: Date? = nil
     var todayPath: [[CLLocationCoordinate2D]] = []
@@ -48,15 +83,13 @@ class LocationManager: NSObject {
         didSet { UserDefaults.standard.set(regionModeEnabled, forKey: "regionModeEnabled") }
     }
 
-    // Timer state
-    private var startTimeForEstimate: Date?
-    private var motionStartTime: Date?
-    private var motionCheckTimer: Timer?
-    private enum TimerTargetState {
-        case motion
-        case stationary
+    private var trackingState = TrackingState.idle {
+        didSet {
+            guard oldValue.usesContinuousGPS != trackingState.usesContinuousGPS else { return }
+            applyGPSMode()
+        }
     }
-    private var targetState: TimerTargetState?
+    private var pendingTransition: Task<Void, Never>?
 
     private override init() {
         let savedAccuracy = UserDefaults.standard.double(forKey: "minimumAccuracy")
@@ -86,8 +119,7 @@ class LocationManager: NSObject {
             audioManager.startPlayingInBackground()
         }
 
-        // Start with significant location changes
-        switchToSignificantLocationChanges()
+        applyGPSMode()
         Self.logger.info("Started with significant location changes...")
 
         // End any orphaned activities from previous sessions before starting a new one
@@ -197,106 +229,94 @@ class LocationManager: NSObject {
     }
 
     private func setupMotionManager() {
-            motionManager.startActivityUpdates(to: .main) { [weak self] activity in
-                guard let self = self else { return }
-                if let activity = activity {
-                let newMotionType = activity.cycling ? "cycling" :
-                    activity.automotive ? "automotive" :
-                        activity.walking ? "walking" :
-                        activity.running ? "running" :
-                    activity.stationary ? "stationary" :
-                    activity.unknown ? "unknown" : "unknown"
-
-                if newMotionType != self.currentMotionType {
-                    self.currentMotionType = newMotionType
-                    self.handleMotionTypeChange(newMotionType)
-                }
-            }
+        motionManager.startActivityUpdates(to: .main) { [weak self] activity in
+            guard let self, let activity else { return }
+            let motionType = MotionType(activity)
+            guard motionType != self.currentMotionType else { return }
+            self.currentMotionType = motionType
+            self.handleMotionTypeChange(motionType)
         }
     }
 
-    private func handleMotionTypeChange(_ motionType: String) {
-        let shouldTrack = ["cycling", "walking", "automotive", "running", "unknown"].contains(motionType)
-        isTrackingMotionType = shouldTrack
+    private func handleMotionTypeChange(_ motionType: MotionType) {
+        pendingTransition?.cancel()
+        pendingTransition = nil
 
-        if shouldTrack {
-            if requiredMotionSeconds == 0 {
-                switchToContinuousUpdates()
-                Self.logger.info("Motion detected (\(motionType)), starting updates immediately")
-            } else {
-                startStateTimer(targetState: .motion, currentState: motionType)
-            }
-        } else {
-            if requiredMotionSeconds == 0 {
-                stopMotionTimer()
-                switchToSignificantLocationChanges()
-                Self.logger.info("Motion stopped (\(motionType)), switching to significant changes")
-            } else {
-                startStateTimer(targetState: .stationary, currentState: motionType)
-            }
+        switch (trackingState, motionType.isMoving) {
+        case (.idle, true), (.arming, true):
+            arm(for: motionType)
+        case (.tracking, true):
+            break
+        case (.disarming(let since), true):
+            trackingState = .tracking(since: since)
+            Self.logger.info("Motion resumed (\(motionType.rawValue)), staying on continuous updates")
+        case (.idle, false):
+            break
+        case (.arming, false):
+            trackingState = .idle
+            Self.logger.info("Stationary before motion was sustained, staying on significant changes")
+        case (.tracking(let since), false), (.disarming(let since), false):
+            disarm(trackingSince: since)
         }
     }
 
-    private func startStateTimer(targetState: TimerTargetState, currentState: String) {
-        stopMotionTimer()
-
-        self.targetState = targetState
-        motionStartTime = Date()
-        motionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-            Task { @MainActor in
-                guard let self = self,
-                      let startTime = self.motionStartTime,
-                      let targetState = self.targetState else {
-                    timer.invalidate()
-                    return
-                }
-
-                let duration = Date().timeIntervalSince(startTime)
-                if duration >= self.requiredMotionSeconds {
-                    self.stopMotionTimer()
-
-                    switch targetState {
-                    case .motion:
-                        self.switchToContinuousUpdates()
-                        Self.logger.info("Motion (\(currentState)) sustained for \(Int(duration))s, starting updates")
-                    case .stationary:
-                        self.switchToSignificantLocationChanges()
-                        Self.logger.info("Stationary sustained for \(Int(duration))s, switching to significant changes")
-                    }
-                }
-            }
+    private func arm(for motionType: MotionType) {
+        guard requiredMotionSeconds > 0 else {
+            trackingState = .tracking(since: Date())
+            Self.logger.info("Motion detected (\(motionType.rawValue)), starting updates immediately")
+            return
         }
+        trackingState = .arming
+        Self.logger.info("Motion detected (\(motionType.rawValue)), waiting \(Int(requiredMotionSeconds))s before tracking")
+        schedulePendingTransition()
+    }
 
-        switch targetState {
-        case .motion:
-            Self.logger.info("Motion detected (\(currentState)), waiting \(Int(self.requiredMotionSeconds))s before tracking")
-        case .stationary:
-            Self.logger.info("Stationary detected, waiting \(Int(self.requiredMotionSeconds))s before stopping")
+    private func disarm(trackingSince: Date) {
+        guard requiredMotionSeconds > 0 else {
+            trackingState = .idle
+            Self.logger.info("Motion stopped, switching to significant changes")
+            return
+        }
+        trackingState = .disarming(trackingSince: trackingSince)
+        Self.logger.info("Stationary detected, waiting \(Int(requiredMotionSeconds))s before stopping")
+        schedulePendingTransition()
+    }
+
+    private func schedulePendingTransition() {
+        let delay = requiredMotionSeconds
+        pendingTransition = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            self?.completePendingTransition()
         }
     }
 
-    private func stopMotionTimer() {
-        motionStartTime = nil
-        targetState = nil
-        motionCheckTimer?.invalidate()
-        motionCheckTimer = nil
+    private func completePendingTransition() {
+        pendingTransition = nil
+        switch trackingState {
+        case .arming:
+            trackingState = .tracking(since: Date())
+            Self.logger.info("Motion (\(currentMotionType.rawValue)) sustained, starting updates")
+        case .disarming:
+            trackingState = .idle
+            Self.logger.info("Stationary sustained, switching to significant changes")
+        case .idle, .tracking:
+            break
+        }
     }
 
     func requestPermissions() {
         locationManager.requestAlwaysAuthorization()
     }
 
-    private func switchToContinuousUpdates() {
-        locationManager.stopMonitoringSignificantLocationChanges()
-        locationManager.startUpdatingLocation()
-        isTracking = true
-        startTimeForEstimate = Date()
-    }
-
-    private func switchToSignificantLocationChanges() {
-        locationManager.stopUpdatingLocation()
-        locationManager.startMonitoringSignificantLocationChanges()
-        isTracking = false
+    private func applyGPSMode() {
+        if trackingState.usesContinuousGPS {
+            locationManager.stopMonitoringSignificantLocationChanges()
+            locationManager.startUpdatingLocation()
+        } else {
+            locationManager.stopUpdatingLocation()
+            locationManager.startMonitoringSignificantLocationChanges()
+        }
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
@@ -343,7 +363,7 @@ class LocationManager: NSObject {
             longitude: currentLocation?.coordinate.longitude ?? 0,
             altitude: currentLocation?.altitude ?? 0,
             speed: currentLocation?.speed ?? 0,
-            age: Int(Date().timeIntervalSince(startTimeForEstimate ?? Date())),
+            age: Int(Date().timeIntervalSince(trackingState.trackingSince ?? Date())),
             lastUpdate: currentLocation?.timestamp ?? Date(),
             lastHeartbeat: lastHeartbeatTimestamp,
             isTracking: isTracking,
@@ -401,7 +421,7 @@ extension LocationManager: @preconcurrency CLLocationManagerDelegate {
 
         currentLocation = location
 
-        guard isTrackingMotionType else { return }
+        guard currentMotionType.isMoving else { return }
         guard location.horizontalAccuracy <= minimumAccuracy else { return }
 
         let motionType = currentMotionType
@@ -423,7 +443,7 @@ extension LocationManager: @preconcurrency CLLocationManagerDelegate {
                     locationPoint.speed = location.speed
                     locationPoint.horizontalAccuracy = location.horizontalAccuracy
                     locationPoint.verticalAccuracy = location.verticalAccuracy
-                    locationPoint.motionType = motionType
+                    locationPoint.motionType = motionType.rawValue
                     locationPoint.hourlyFile = fileInBg
                     try bgContext.save()
                 }
