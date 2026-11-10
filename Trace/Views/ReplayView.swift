@@ -19,6 +19,7 @@ struct ReplayView: View {
     @State private var loadErrors: [String: String] = [:]
     @State private var fitToken = 0
     @State private var recenterToken = 0
+    @State private var showCalendar = false
 
     private var dayKey: String { DayTrack.dayKey(for: selectedDay) }
     private var track: DayTrack? { tracks[dayKey] }
@@ -44,13 +45,32 @@ struct ReplayView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            dayBar
-            mapSection
-            scrubberSection
+        GeometryReader { proxy in
+            ZStack {
+                TraceStyle.background
+                mapSection(insets: proxy.safeAreaInsets)
+            }
+            .ignoresSafeArea()
         }
-        .background(TraceStyle.background.ignoresSafeArea())
-        .foregroundColor(TraceStyle.primaryText)
+        .overlay(alignment: .topTrailing) {
+            if hasTrack {
+                mapControls
+                    .padding(.trailing, 16)
+                    .padding(.top, 12)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            dayBar
+                .padding(.top, 8)
+                .padding(.horizontal, 16)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            scrubberPanel
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+        }
+        .foregroundStyle(TraceStyle.primaryText)
+        .environment(\.colorScheme, .dark)
         .task { await loadIfNeeded() }
         .onChange(of: selectedDay) { _, _ in
             Task { await loadIfNeeded() }
@@ -66,45 +86,51 @@ struct ReplayView: View {
     // MARK: - Date selection
 
     private var dayBar: some View {
-        HStack(spacing: 12) {
-            mapButton(icon: "chevron.left") { step(days: -1) }
+        HStack(spacing: 0) {
+            stepButton(icon: "chevron.left", label: "Previous day") { step(days: -1) }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(selectedDay, format: .dateTime.weekday(.wide))
-                    .font(.caption)
-                    .foregroundColor(TraceStyle.secondaryText)
-                Text(selectedDay, format: .dateTime.day().month(.abbreviated).year())
-                    .font(.headline)
+            Button { showCalendar = true } label: {
+                HStack(spacing: 6) {
+                    VStack(spacing: 1) {
+                        Text(selectedDay, format: .dateTime.weekday(.wide))
+                            .font(.caption)
+                            .foregroundStyle(TraceStyle.secondaryText)
+                        Text(selectedDay, format: .dateTime.day().month(.abbreviated).year())
+                            .font(.headline)
+                    }
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(TraceStyle.secondaryText)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
             }
-            .overlay(
-                DatePicker(
-                    "",
-                    selection: $selectedDay,
-                    in: ...Date(),
-                    displayedComponents: .date
-                )
-                .labelsHidden()
-                .datePickerStyle(.compact)
-                .blendMode(.destinationOver)
-                .opacity(0.02)
-            )
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens a calendar")
+            .popover(isPresented: $showCalendar) {
+                DayCalendarPopover(day: $selectedDay)
+                    .presentationCompactAdaptation(.popover)
+            }
 
-            Spacer(minLength: 0)
-
-            mapButton(icon: "chevron.right") { step(days: 1) }
+            stepButton(icon: "chevron.right", label: "Next day") { step(days: 1) }
                 .disabled(isToday)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .glassEffect(.regular, in: .capsule)
     }
 
-    private func mapButton(icon: String, action: @escaping () -> Void) -> some View {
+    private func stepButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
+                .font(.body.weight(.semibold))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
         }
-        .font(.body.weight(.medium))
-        .tint(TraceStyle.accent)
-        .padding(.horizontal, 4)
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .accessibilityLabel(label)
     }
 
     private func step(days: Int) {
@@ -119,95 +145,116 @@ struct ReplayView: View {
 
     // MARK: - Map
 
-    private var mapSection: some View {
-        ZStack {
-            TraceStyle.card
+    private var hasTrack: Bool { !(track?.isEmpty ?? true) }
 
-            if let track, !track.isEmpty {
-                ReplayMapView(
-                    track: track,
-                    headIndex: track.headIndex(at: secondsIntoDay),
-                    marker: marker,
-                    fitToken: fitToken,
-                    recenterToken: recenterToken
-                )
-            } else if isLoading {
-                VStack(spacing: 10) {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: TraceStyle.primaryText))
-                    Text("Loading track…")
-                        .font(.caption)
-                        .foregroundColor(TraceStyle.secondaryText)
-                }
-                .padding(16)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: TraceStyle.cardRadius))
-                .transition(.opacity)
-            } else {
-                emptyState
-            }
+    @ViewBuilder
+    private func mapSection(insets: EdgeInsets) -> some View {
+        if let track, !track.isEmpty {
+            ReplayMapView(
+                track: track,
+                headIndex: track.headIndex(at: secondsIntoDay),
+                marker: marker,
+                contentInsets: insets,
+                fitToken: fitToken,
+                recenterToken: recenterToken
+            )
+        } else if isLoading {
+            ProgressView("Loading track…")
+                .tint(TraceStyle.secondaryText)
+                .foregroundStyle(TraceStyle.secondaryText)
+                .padding(insets)
+        } else {
+            emptyState
+                .padding(insets)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeInOut(duration: 0.2), value: isLoading)
     }
 
+    private var mapControls: some View {
+        VStack(spacing: 0) {
+            mapControlButton(icon: "location.fill", label: "Center on position") {
+                recenterToken += 1
+            }
+            .disabled(marker == nil)
+            Divider()
+                .frame(width: 28)
+            mapControlButton(icon: "arrow.up.left.and.arrow.down.right", label: "Show whole day") {
+                fitToken += 1
+            }
+        }
+        .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
+    private func mapControlButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.body.weight(.medium))
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .accessibilityLabel(label)
+    }
+
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: errorMessage == nil ? "map" : "exclamationmark.triangle")
-                .font(.title2)
-                .foregroundColor(TraceStyle.tertiaryText)
-            Text(emptyStateMessage)
-                .font(.subheadline)
-                .foregroundColor(TraceStyle.secondaryText)
-                .multilineTextAlignment(.center)
-            if errorMessage != nil {
+        if let errorMessage {
+            ContentUnavailableView {
+                Label("Couldn't Load Track", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(errorMessage)
+            } actions: {
                 Button("Retry") { Task { await loadIfNeeded() } }
-                    .tint(TraceStyle.accent)
+                    .buttonStyle(.glass)
             }
+        } else {
+            ContentUnavailableView(
+                "No Data",
+                systemImage: "map",
+                description: Text("Nothing was recorded on this day.")
+            )
         }
-        .padding()
-    }
-
-    private var emptyStateMessage: String {
-        errorMessage ?? "No data for this day"
     }
 
     // MARK: - Scrubber
 
-    private var scrubberSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var scrubberPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(clockLabel)
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .font(.system(.title, design: .rounded, weight: .semibold))
                     .monospacedDigit()
+                    .contentTransition(.numericText())
                 Spacer(minLength: 0)
-                Text(positionLabel)
-                    .font(.caption2)
-                    .foregroundColor(TraceStyle.tertiaryText)
+                positionBadge
             }
 
             ZStack(alignment: .leading) {
                 CoverageBand(spans: track?.coverage ?? [], dayLength: dayLength)
-                    .frame(width: nil, height: 6, alignment: .leading)
-                Slider(
-                    value: $secondsIntoDay,
-                    in: 0...max(dayLength, 1),
-                    step: 60,
-                    onEditingChanged: { _ in resetIfNeeded() }
-                )
-                .disabled(track?.isEmpty ?? true)
+                    .frame(height: 6)
+                Slider(value: $secondsIntoDay, in: 0...max(dayLength, 1), step: 60)
+                    .disabled(!hasTrack)
             }
 
             HStack {
                 Text("00:00")
-                    .font(.caption2)
-                    .foregroundColor(TraceStyle.tertiaryText)
                 Spacer(minLength: 0)
                 Text(endOfDayLabel)
-                    .font(.caption2)
-                    .foregroundColor(TraceStyle.tertiaryText)
             }
+            .font(.caption2)
+            .monospacedDigit()
+            .foregroundStyle(TraceStyle.tertiaryText)
         }
-        .padding()
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .glassEffect(.regular, in: .rect(cornerRadius: 28))
+    }
+
+    private var positionBadge: some View {
+        Label(positionLabel, systemImage: positionIcon)
+            .font(.subheadline.weight(.medium))
+            .monospacedDigit()
+            .foregroundStyle(TraceStyle.secondaryText)
     }
 
     private var clockLabel: String {
@@ -220,7 +267,7 @@ struct ReplayView: View {
         switch scrubbedPosition {
         case .live(let fix):
             guard let speed = fix.speedMetersPerSecond else { return "Live" }
-            return StatsFormatting.speedKmh(speed)
+            return "\(StatsFormatting.speedKmh(speed)) km/h"
         case .stale:
             return "No signal"
         case .unknown:
@@ -228,12 +275,16 @@ struct ReplayView: View {
         }
     }
 
-    private var endOfDayLabel: String {
-        "\(Int(dayLength) / 3600)h"
+    private var positionIcon: String {
+        switch scrubbedPosition {
+        case .live: "location.fill"
+        case .stale: "location.slash"
+        case .unknown: "location"
+        }
     }
 
-    private func resetIfNeeded() {
-        // Placeholder hook for Slider's onEditingChanged — no-op unless a future need arises.
+    private var endOfDayLabel: String {
+        String(format: "%02d:00", Int(dayLength) / 3600)
     }
 
     /// Resets the scrubber to a sensible starting point after (re)loading a day: the first fix,
@@ -265,6 +316,39 @@ struct ReplayView: View {
             fitToken += 1
         } catch {
             loadErrors[key] = error.localizedDescription
+        }
+    }
+
+    private struct DayCalendarPopover: View {
+        @Binding var day: Date
+
+        @Environment(\.dismiss) private var dismiss
+        @State private var draft: Date
+
+        init(day: Binding<Date>) {
+            _day = day
+            _draft = State(initialValue: day.wrappedValue)
+        }
+
+        var body: some View {
+            VStack(spacing: 4) {
+                DatePicker("Day", selection: $draft, in: ...Date(), displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .labelsHidden()
+
+                HStack {
+                    Button("Today") { draft = Calendar.current.startOfDay(for: Date()) }
+                        .disabled(Calendar.current.isDateInToday(draft))
+                    Spacer()
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+                .padding(.horizontal, 8)
+            }
+            .padding(12)
+            .frame(width: 340)
+            .preferredColorScheme(.dark)
+            .onDisappear { day = Calendar.current.startOfDay(for: draft) }
         }
     }
 

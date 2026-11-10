@@ -17,6 +17,7 @@ struct ReplayMapView: UIViewRepresentable {
     let track: DayTrack
     let headIndex: Int
     let marker: Marker?
+    let contentInsets: EdgeInsets
     let fitToken: Int
     let recenterToken: Int
 
@@ -32,6 +33,12 @@ struct ReplayMapView: UIViewRepresentable {
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
         let coordinator = context.coordinator
+        coordinator.contentInsets = UIEdgeInsets(
+            top: contentInsets.top,
+            left: contentInsets.leading,
+            bottom: contentInsets.bottom,
+            right: contentInsets.trailing
+        )
 
         if coordinator.dayKey != track.dayKey {
             coordinator.dayKey = track.dayKey
@@ -64,7 +71,7 @@ struct ReplayMapView: UIViewRepresentable {
 
         if coordinator.lastRecenterToken != recenterToken, let marker {
             coordinator.lastRecenterToken = recenterToken
-            mapView.setCenter(marker.coordinate, animated: true)
+            coordinator.center(on: marker.coordinate, in: mapView)
         }
     }
 
@@ -78,6 +85,7 @@ struct ReplayMapView: UIViewRepresentable {
         var renderer: TrackProgressRenderer?
         var lastFitToken = 0
         var lastRecenterToken = 0
+        var contentInsets = UIEdgeInsets.zero
         private var annotation: ReplayMarkerAnnotation?
 
         func fitCamera(to track: DayTrack, in mapView: MKMapView) {
@@ -85,9 +93,32 @@ struct ReplayMapView: UIViewRepresentable {
             guard !rect.isNull else { return }
             mapView.setVisibleMapRect(
                 rect,
-                edgePadding: UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40),
+                edgePadding: UIEdgeInsets(
+                    top: contentInsets.top + 40,
+                    left: contentInsets.left + 40,
+                    bottom: contentInsets.bottom + 40,
+                    right: contentInsets.right + 40
+                ),
                 animated: true
             )
+        }
+
+        func center(on coordinate: CLLocationCoordinate2D, in mapView: MKMapView) {
+            let bounds = mapView.bounds.size
+            let unobscuredWidth = bounds.width - contentInsets.left - contentInsets.right
+            let unobscuredHeight = bounds.height - contentInsets.top - contentInsets.bottom
+            guard unobscuredWidth > 0, unobscuredHeight > 0 else { return }
+            let visible = mapView.visibleMapRect.size
+            let size = MKMapSize(
+                width: visible.width * unobscuredWidth / bounds.width,
+                height: visible.height * unobscuredHeight / bounds.height
+            )
+            let point = MKMapPoint(coordinate)
+            let rect = MKMapRect(
+                origin: MKMapPoint(x: point.x - size.width / 2, y: point.y - size.height / 2),
+                size: size
+            )
+            mapView.setVisibleMapRect(rect, edgePadding: contentInsets, animated: true)
         }
 
         func apply(marker: ReplayMapView.Marker?, in mapView: MKMapView) {
