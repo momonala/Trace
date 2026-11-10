@@ -19,14 +19,17 @@ struct StatsView: View {
     @State private var apiManager = ServerAPIManager.shared
     @State private var lookbackDays = 7
     @State private var selectedTrace = StatTrace.defaultTrace
-    @State private var dailyStats: [DailyStats] = []
-    @State private var isLoading = false
-    @State private var errorMessage: String?
+    @State private var load = StatsLoad.loading
     @State private var showCustomLookbackSheet = false
     @State private var selectedRowID: String?
     @State private var wasInBackground = false
     @State private var sortColumn: StatsTableColumn?
     @State private var sortAscending = false
+
+    private var dailyStats: [DailyStats] {
+        guard case .loaded(let rows) = load else { return [] }
+        return rows
+    }
 
     private var displayedStats: [DailyStats] {
         guard let sortColumn else {
@@ -108,11 +111,11 @@ struct StatsView: View {
             .sheet(isPresented: $showCustomLookbackSheet) {
                 CustomLookbackSheet(days: $lookbackDays)
             }
-            .task {
+            .task(id: lookbackDays) {
                 await loadStats()
             }
             .onChange(of: lookbackDays) { _, _ in
-                Task { await loadStats() }
+                load = .loading
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background {
@@ -163,7 +166,7 @@ struct StatsView: View {
                 subtitle: "Last \(lookbackDays) days"
             )
 
-            if isLoading {
+            if case .loading = load {
                 HStack {
                     Spacer()
                     ProgressView()
@@ -171,8 +174,8 @@ struct StatsView: View {
                     Spacer()
                 }
                 .frame(height: 188)
-            } else if let errorMessage {
-                chartMessage(errorMessage, color: TraceStyle.accent)
+            } else if case .failed(let message) = load {
+                chartMessage(message, color: TraceStyle.accent)
             } else if chartPoints.isEmpty {
                 chartMessage("No data for this range.", color: TraceStyle.secondaryText)
             } else {
@@ -231,7 +234,7 @@ struct StatsView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Daily breakdown")
 
-            if isLoading {
+            if case .loading = load {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: TraceStyle.primaryText))
             } else if dailyStats.isEmpty {
@@ -439,17 +442,22 @@ struct StatsView: View {
 
     @MainActor
     private func loadStats() async {
-        isLoading = true
-        errorMessage = nil
-        defer { isLoading = false }
-
+        let days = lookbackDays
+        let result: StatsLoad
         do {
-            dailyStats = try await apiManager.fetchDailyStats(days: lookbackDays)
+            result = .loaded(try await apiManager.fetchDailyStats(days: days))
         } catch {
-            dailyStats = []
-            errorMessage = error.localizedDescription
+            result = .failed(error.localizedDescription)
         }
+        guard !Task.isCancelled, days == lookbackDays else { return }
+        load = result
     }
+}
+
+private enum StatsLoad {
+    case loading
+    case loaded([DailyStats])
+    case failed(String)
 }
 
 private struct CustomLookbackSheet: View {
