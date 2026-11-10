@@ -14,17 +14,19 @@ struct ReplayView: View {
 
     @State private var selectedDay = Calendar.current.startOfDay(for: Date())
     @State private var secondsIntoDay: Double = 0
-    /// Days already fetched, so stepping back and forth with the chevrons is instant.
-    @State private var tracks: [String: DayTrack] = [:]
-    @State private var loadErrors: [String: String] = [:]
+    /// Load state per day; loaded days stay cached so stepping back and forth with the chevrons is instant.
+    @State private var days: [String: DayLoad] = [:]
     @State private var fitToken = 0
     @State private var recenterToken = 0
     @State private var showCalendar = false
 
     private var dayKey: String { DayTrack.dayKey(for: selectedDay) }
-    private var track: DayTrack? { tracks[dayKey] }
-    private var errorMessage: String? { loadErrors[dayKey] }
-    private var isLoading: Bool { track == nil && errorMessage == nil }
+    private var dayLoad: DayLoad { days[dayKey] ?? .loading }
+
+    private var track: DayTrack? {
+        guard case .loaded(let track) = dayLoad else { return nil }
+        return track
+    }
 
     private var dayLength: TimeInterval { track?.dayLength ?? 86400 }
 
@@ -78,8 +80,7 @@ struct ReplayView: View {
         .onChange(of: scenePhase) { _, phase in
             // Today's track keeps growing while the app is away.
             guard phase == .active, isToday else { return }
-            tracks[dayKey] = nil
-            Task { await loadIfNeeded() }
+            Task { await refreshToday() }
         }
     }
 
@@ -158,7 +159,7 @@ struct ReplayView: View {
                 fitToken: fitToken,
                 recenterToken: recenterToken
             )
-        } else if isLoading {
+        } else if case .loading = dayLoad {
             ProgressView("Loading track…")
                 .tint(TraceStyle.secondaryText)
                 .foregroundStyle(TraceStyle.secondaryText)
@@ -198,11 +199,11 @@ struct ReplayView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if let errorMessage {
+        if case .failed(let message) = dayLoad {
             ContentUnavailableView {
                 Label("Couldn't Load Track", systemImage: "exclamationmark.triangle")
             } description: {
-                Text(errorMessage)
+                Text(message)
             } actions: {
                 Button("Retry") { Task { await loadIfNeeded() } }
                     .buttonStyle(.glass)
@@ -305,18 +306,45 @@ struct ReplayView: View {
     private func loadIfNeeded() async {
         let day = selectedDay
         let key = dayKey
-        guard tracks[key] == nil else { return }
-        loadErrors[key] = nil
+        switch days[key] {
+        case .loading, .loaded: return
+        case .failed, nil: break
+        }
+        days[key] = .loading
         do {
-            let paths = try await apiManager.fetchCoordinates(dayKey: key)
-            let newTrack = DayTrack(day: day, paths: paths, calendar: .current)
-            tracks[key] = newTrack
+            let newTrack = try await fetchTrack(day: day, key: key)
+            days[key] = .loaded(newTrack)
             guard key == dayKey else { return }
             resetScrubber(for: newTrack)
             fitToken += 1
         } catch {
-            loadErrors[key] = error.localizedDescription
+            days[key] = Task.isCancelled ? nil : .failed(error.localizedDescription)
         }
+    }
+
+    private func refreshToday() async {
+        let key = dayKey
+        guard case .loaded(let oldTrack) = days[key] else {
+            await loadIfNeeded()
+            return
+        }
+        guard let newTrack = try? await fetchTrack(day: selectedDay, key: key) else { return }
+        days[key] = .loaded(newTrack)
+        guard key == dayKey else { return }
+        if secondsIntoDay >= oldTrack.lastFixOffset ?? 0 {
+            resetScrubber(for: newTrack)
+        }
+    }
+
+    private func fetchTrack(day: Date, key: String) async throws -> DayTrack {
+        let paths = try await apiManager.fetchCoordinates(dayKey: key)
+        return DayTrack(day: day, paths: paths, calendar: .current)
+    }
+
+    private enum DayLoad {
+        case loading
+        case loaded(DayTrack)
+        case failed(String)
     }
 
     private struct DayCalendarPopover: View {
