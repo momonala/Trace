@@ -13,10 +13,6 @@ class HealthSyncManager {
     private static let autoSyncIntervalSeconds: TimeInterval = 10 * 60
 
     var lastSyncAt: Date?
-    /// When true, UI may show a success toast for the sync that just updated `lastSyncAt`.
-    var announceNextSync = false
-    /// Sample count from the most recent successful upload; used by the success toast.
-    var lastSyncSampleCount: Int = 0
 
     private let store = HKHealthStore()
     private var isSyncing = false
@@ -46,16 +42,18 @@ class HealthSyncManager {
     /// Live Activity with zeros. Stats are refreshed only when the app is foregrounded.
     private func performPeriodicHealthUpdate() async {
         Self.logger.info("Starting scheduled health sync (every 10m)")
-        await syncNow(announce: false)
+        await syncNow()
         await ServerAPIManager.shared.fetchHealthSummary()
     }
 
-    func syncNow(announce: Bool = false) async {
-        guard !isSyncing else { return }
+    /// Returns the number of samples uploaded, or nil when nothing was sent.
+    @discardableResult
+    func syncNow() async -> Int? {
+        guard !isSyncing else { return nil }
         isSyncing = true
         defer { isSyncing = false }
 
-        guard HKHealthStore.isHealthDataAvailable() else { return }
+        guard HKHealthStore.isHealthDataAvailable() else { return nil }
 
         let now = Date()
         let startOfDay = Calendar.current.startOfDay(for: now)
@@ -70,7 +68,7 @@ class HealthSyncManager {
 
             guard !allSamples.isEmpty else {
                 Self.logger.info("No health samples today — skipping upload")
-                return
+                return nil
             }
 
             let completedIndex = batchIndex
@@ -80,12 +78,12 @@ class HealthSyncManager {
             try await ServerAPIManager.shared.uploadHealthBatch(payload)
 
             batchIndex += 1
-            lastSyncSampleCount = allSamples.count
-            announceNextSync = announce
             lastSyncAt = now
             Self.logger.info("Health sync complete — batch \(completedIndex)")
+            return allSamples.count
         } catch {
             Self.logger.error("Health sync failed: \(error.localizedDescription)")
+            return nil
         }
     }
 

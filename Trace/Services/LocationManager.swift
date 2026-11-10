@@ -31,10 +31,6 @@ class LocationManager: NSObject {
     var currentMotionType: String = "stationary"
     var isTrackingMotionType = false
     var error: Error?
-    var mapRefreshError: Error?
-    var pointsLast24h: Int = 0
-    var pointsLabel = "Points 0d"
-    var mapPaths: [[MapCoordinate]] = []
     var lastHeartbeatTimestamp: Date? = nil
     var todayPath: [[CLLocationCoordinate2D]] = []
 
@@ -150,18 +146,15 @@ class LocationManager: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    private func lookbackHoursAndLabel() -> (hours: Int, label: String) {
+    private func lookbackHours() -> Int {
         if lookbackDays == 0 {
             let midnight = Calendar.current.startOfDay(for: Date())
-            let hoursSinceMidnight = Int(ceil(Date().timeIntervalSince(midnight) / 3600))
-            return (hoursSinceMidnight, "Points Today")
+            return Int(ceil(Date().timeIntervalSince(midnight) / 3600))
         }
-        return (Int(lookbackDays * 24), "Points \(Int(lookbackDays))d")
+        return Int(lookbackDays * 24)
     }
 
-    func refreshMapData(regionBBox: MapBoundingBox? = nil) async {
-        mapRefreshError = nil
-
+    func fetchMapPaths(regionBBox: MapBoundingBox? = nil) async throws -> [[MapCoordinate]] {
         let queryItems: [URLQueryItem]
         if let bbox = regionBBox {
             queryItems = [
@@ -170,68 +163,36 @@ class LocationManager: NSObject {
                 URLQueryItem(name: "min_lon", value: String(bbox.minLon)),
                 URLQueryItem(name: "max_lon", value: String(bbox.maxLon)),
             ]
-            pointsLabel = "Points (region)"
         } else {
-            let (hours, label) = lookbackHoursAndLabel()
-            queryItems = [URLQueryItem(name: "lookback_hours", value: String(hours))]
-            pointsLabel = label
+            queryItems = [URLQueryItem(name: "lookback_hours", value: String(lookbackHours()))]
         }
 
-        guard let url = URL(string: "\(fileManager.serverBaseURL)/coordinates") else {
-            let error = NSError(domain: "com.trace", code: 1, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
-            Self.logger.error("\(error.localizedDescription)")
-            mapRefreshError = error
-            return
+        guard var components = URLComponents(string: "\(fileManager.serverBaseURL)/coordinates") else {
+            throw URLError(.badURL)
         }
-
-        var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        urlComponents?.queryItems = queryItems
-
-        guard let finalURL = urlComponents?.url else {
-            let error = NSError(domain: "com.trace", code: 2, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
-            Self.logger.error("\(error.localizedDescription)")
-            mapRefreshError = error
-            return
-        }
+        components.queryItems = queryItems
+        guard let url = components.url else { throw URLError(.badURL) }
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: finalURL)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                let error = NSError(domain: "com.trace", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid server response"])
-                Self.logger.error("\(error.localizedDescription)")
-                mapRefreshError = error
-                return
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                throw NSError(domain: "com.trace", code: code, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP \(code)"])
             }
-
-            guard (200...299).contains(httpResponse.statusCode) else {
-                let error = NSError(domain: "com.trace", code: 4, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP \(httpResponse.statusCode)"])
-                Self.logger.error("\(error.localizedDescription)")
-                mapRefreshError = error
-                return
+            let payload = try JSONDecoder().decode(CoordinatesResponse.self, from: data)
+            guard payload.status == "success" else {
+                throw NSError(domain: "com.trace", code: 6, userInfo: [NSLocalizedDescriptionKey: "Server returned error status"])
             }
-
-            let decoder = JSONDecoder()
-            let payload = try decoder.decode(CoordinatesResponse.self, from: data)
-
-            if payload.status != "success" {
-                let error = NSError(domain: "com.trace", code: 6, userInfo: [NSLocalizedDescriptionKey: "Server returned error status"])
-                Self.logger.error("\(error.localizedDescription)")
-                mapRefreshError = error
-                return
-            }
-
-            pointsLast24h = payload.count
-            mapPaths = payload.paths
             let modeDescription = regionBBox != nil
                 ? "region"
                 : "lookback: \(payload.lookbackHours.map { "\($0)h" } ?? "?")"
             Self.logger.info(
                 "Loaded \(payload.count) points across \(payload.paths.count) paths from API (\(modeDescription))"
             )
+            return payload.paths
         } catch {
             Self.logger.error("Map refresh failed: \(error.localizedDescription)")
-            mapRefreshError = error
+            throw error
         }
     }
 

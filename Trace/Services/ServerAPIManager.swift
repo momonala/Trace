@@ -130,7 +130,6 @@ class ServerAPIManager {
     var currentHourlyFile: HourlyFile?
     var queuedFiles: Int = 0
     var bufferSize: Int = 0
-    var uploadError: Error?
     var isUploading = false
     var lastPointTime: Date?
     var lastUploadAttempt: Date? {
@@ -182,7 +181,7 @@ class ServerAPIManager {
                 guard let self = self else { return }
                 if await self.queuedFiles > 0 {
                     await Self.logger.info("Starting scheduled auto-upload")
-                    await self.uploadAllFiles()
+                    try? await self.uploadAllFiles()
                 }
             }
         }
@@ -190,7 +189,7 @@ class ServerAPIManager {
         Task {
             if queuedFiles > 0 {
                 Self.logger.info("Starting initial auto-upload")
-                await uploadAllFiles()
+                try? await uploadAllFiles()
             }
         }
     }
@@ -351,10 +350,9 @@ class ServerAPIManager {
         }
     }
 
-    func uploadAllFiles() async {
+    func uploadAllFiles() async throws {
         guard !isUploading else { return }
         isUploading = true
-        uploadError = nil
         defer { isUploading = false }
 
         Self.logger.info("Starting upload of completed files")
@@ -364,16 +362,15 @@ class ServerAPIManager {
         request.predicate = queuedFilesPredicate()
         request.sortDescriptors = [NSSortDescriptor(keyPath: \HourlyFile.startTime, ascending: true)]
 
+        var failure: Error?
         do {
             let filesToUpload = try context.fetch(request)
             Self.logger.info("Found \(String(describing: filesToUpload.count)) files with points to upload")
 
-            var hadError = false
             for file in filesToUpload {
                 let points = file.points?.allObjects as? [LocationPoint] ?? []
                 if let error = await upload(points) {
-                    uploadError = error
-                    hadError = true
+                    failure = error
                     continue
                 }
                 points.forEach(context.delete)
@@ -384,20 +381,17 @@ class ServerAPIManager {
                 }
             }
 
-            if !filesToUpload.isEmpty, !hadError {
+            if !filesToUpload.isEmpty, failure == nil {
                 Self.logger.info("Successfully processed all files")
                 lastUploadAttempt = Date()
             }
         } catch {
             Self.logger.error("Error during upload: \(String(describing: error.localizedDescription))")
-            uploadError = NSError(
-                domain: "com.trace",
-                code: 500,
-                userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 500"]
-            )
+            failure = error
         }
 
         await refreshQueuedFilesCount()
+        if let failure { throw failure }
     }
 
     func uploadHealthBatch(_ payload: HealthBatchPayload) async throws {

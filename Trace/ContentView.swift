@@ -182,10 +182,6 @@ struct MapView: UIViewRepresentable {
             if !paths.isEmpty, validPathsCount == 0 {
                 Self.logger.warning("Received \(paths.count) paths, but none had enough points to render")
             }
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                NotificationCenter.default.post(name: NSNotification.Name("PlottingComplete"), object: nil)
-            }
         }
     }
     
@@ -284,18 +280,12 @@ struct ContentView: View {
     )
     @State private var isMapTrackingEnabled = false
     @State private var hasAutoFocusedOnStartup = false
-    @State private var displayedPaths: [[MapCoordinate]] = []
-    @State private var isLoadingCoordinates = false
-    @State private var isPlottingCoordinates = false
-    @State private var showUploadError = false
-    @State private var showRefreshError = false
-    @State private var showNoQueuedFilesInfo = false
+    @State private var mapOverlay = MapOverlay.hidden
+    @State private var toasts: [Toast] = []
     @State private var showMotionStatsOverlay = false
     @State private var motionStats: MotionStats?
     @State private var motionStatsError: String?
     @State private var isLoadingMotionStats = false
-    @State private var showSnoozeConfirmation = false
-    @State private var snoozeMessage = ""
     @State private var showSnoozeSheet = false
 
     /// Landscape iPhone. Only the Live tab ever reaches this; the rest are locked to portrait.
@@ -336,37 +326,46 @@ struct ContentView: View {
         )
     }
 
+    private func show(_ toast: Toast) {
+        withAnimation {
+            toasts.removeAll { $0.kind == toast.kind }
+            toasts.append(toast)
+        }
+    }
+
     private func refreshMap() {
-        if !displayedPaths.isEmpty {
-            displayedPaths = []
+        if case .shown = mapOverlay {
+            mapOverlay = .hidden
             return
         }
+        mapOverlay = .loading
+        let bbox = locationManager.regionModeEnabled ? currentRegionBBox() : nil
         Task {
-            isLoadingCoordinates = true
-            let bbox: MapBoundingBox? = locationManager.regionModeEnabled
-                ? currentRegionBBox()
-                : nil
-            await locationManager.refreshMapData(regionBBox: bbox)
-            isLoadingCoordinates = false
-
-            isPlottingCoordinates = true
-            displayedPaths = locationManager.mapPaths
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            isPlottingCoordinates = false
-
-            showRefreshError = locationManager.mapRefreshError != nil
+            do {
+                mapOverlay = .shown(try await locationManager.fetchMapPaths(regionBBox: bbox))
+            } catch {
+                mapOverlay = .hidden
+                show(.refreshFailed(error))
+            }
         }
     }
 
     private func uploadFiles() {
-        Task { await HealthSyncManager.shared.syncNow(announce: true) }
+        Task {
+            if let sampleCount = await HealthSyncManager.shared.syncNow() {
+                show(.healthSynced(sampleCount))
+            }
+        }
         guard fileManager.queuedFiles > 0 else {
-            showNoQueuedFilesInfo = true
+            show(.noQueuedFiles)
             return
         }
         Task {
-            await fileManager.uploadAllFiles()
-            showUploadError = fileManager.uploadError != nil
+            do {
+                try await fileManager.uploadAllFiles()
+            } catch {
+                show(.uploadFailed(error))
+            }
         }
     }
 
@@ -374,11 +373,10 @@ struct ContentView: View {
         Task {
             do {
                 try await fileManager.snoozeAlerts(minutes: minutes)
-                snoozeMessage = "Alerts snoozed until \(wakeTime)"
+                show(.snoozed(until: wakeTime))
             } catch {
-                snoozeMessage = "Snooze failed: \(error.localizedDescription)"
+                show(.snoozeFailed(error))
             }
-            showSnoozeConfirmation = true
         }
     }
 
@@ -410,7 +408,7 @@ struct ContentView: View {
                 MapView(
                     region: $region,
                     isTrackingEnabled: $isMapTrackingEnabled,
-                    paths: displayedPaths,
+                    paths: mapOverlay.paths,
                     todayPath: locationManager.todayPath,
                     lookbackDays: locationManager.lookbackDays
                 )
@@ -418,15 +416,7 @@ struct ContentView: View {
 
                 VStack {
                     HStack {
-                        StatsPanel(
-                            isLoadingCoordinates: $isLoadingCoordinates,
-                            isPlottingCoordinates: $isPlottingCoordinates,
-                            showUploadError: $showUploadError,
-                            showRefreshError: $showRefreshError,
-                            showNoQueuedFilesInfo: $showNoQueuedFilesInfo,
-                            showSnoozeConfirmation: $showSnoozeConfirmation,
-                            snoozeMessage: snoozeMessage
-                        )
+                        StatsPanel(toasts: $toasts, isLoadingMap: mapOverlay.isLoading)
                         .background(Color.black.opacity(0.7))
                         .cornerRadius(10)
                         .fixedSize(horizontal: true, vertical: false)
@@ -460,12 +450,12 @@ struct ContentView: View {
                             .disabled(fileManager.isUploading)
 
                             Button(action: refreshMap) {
-                                MapFloatingButton(isBusy: isLoadingCoordinates || isPlottingCoordinates) {
-                                    Image(systemName: displayedPaths.isEmpty ? "arrow.clockwise" : "xmark")
+                                MapFloatingButton(isBusy: mapOverlay.isLoading) {
+                                    Image(systemName: mapOverlay.isShown ? "xmark" : "arrow.clockwise")
                                         .foregroundColor(.white)
                                 }
                             }
-                            .disabled(isLoadingCoordinates || isPlottingCoordinates)
+                            .disabled(mapOverlay.isLoading)
 
                             Button(action: showMotionStats) {
                                 MapFloatingButton(isBusy: isLoadingMotionStats) {
@@ -554,7 +544,7 @@ struct ContentView: View {
             Task {
                 async let health: Void = HealthManager.shared.refresh()
                 async let trail: Void = locationManager.refreshTodayPath()
-                async let sync: Void = HealthSyncManager.shared.syncNow()
+                async let sync = HealthSyncManager.shared.syncNow()
                 _ = await (health, trail, sync)
             }
         }
@@ -803,15 +793,9 @@ struct StatsPanel: View {
     @State private var fileManager = ServerAPIManager.shared
     @State private var healthManager = HealthManager.shared
     @State private var healthSync = HealthSyncManager.shared
-    @State private var showHealthSyncSuccess = false
     @State private var currentTime = Date()
-    @Binding var isLoadingCoordinates: Bool
-    @Binding var isPlottingCoordinates: Bool
-    @Binding var showUploadError: Bool
-    @Binding var showRefreshError: Bool
-    @Binding var showNoQueuedFilesInfo: Bool
-    @Binding var showSnoozeConfirmation: Bool
-    let snoozeMessage: String
+    @Binding var toasts: [Toast]
+    let isLoadingMap: Bool
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private func fmtSteps(_ count: Int) -> String {
@@ -836,10 +820,7 @@ struct StatsPanel: View {
     /// The status stack is empty most of the time; skipping it keeps the panel from carrying a
     /// strip of dead space under the last row.
     private var hasStatusMessages: Bool {
-        showNoQueuedFilesInfo || showHealthSyncSuccess || showSnoozeConfirmation
-            || isLoadingCoordinates || isPlottingCoordinates
-            || (showUploadError && fileManager.uploadError != nil)
-            || (showRefreshError && locationManager.mapRefreshError != nil)
+        isLoadingMap || !toasts.isEmpty
     }
 
     private var divider: some View {
@@ -959,83 +940,30 @@ struct StatsPanel: View {
             currentTime = now
         }
         .onChange(of: healthSync.lastSyncAt) { _, _ in
-            showNoQueuedFilesInfo = false
-            if healthSync.announceNextSync {
-                showHealthSyncSuccess = true
-                healthSync.announceNextSync = false
-            }
             Task { await fileManager.fetchHealthSummary() }
         }
     }
 
     private var statusMessages: some View {
         VStack(spacing: 4) {
-                if showNoQueuedFilesInfo {
-                    ErrorMessage(
-                        icon: "tray",
-                        message: "No files queued for upload.",
-                        color: .gray,
-                        onDismiss: { showNoQueuedFilesInfo = false }
-                    )
-                }
+            if isLoadingMap {
+                StatusMessage(
+                    icon: "loading",
+                    message: "Loading coordinates...",
+                    color: .blue
+                )
+            }
 
-                if showHealthSyncSuccess {
-                    ErrorMessage(
-                        icon: "heart.fill",
-                        message: "\(healthSync.lastSyncSampleCount) health samples synced",
-                        color: .green,
-                        onDismiss: { showHealthSyncSuccess = false }
-                    )
-                }
-
-                if showSnoozeConfirmation {
-                    ErrorMessage(
-                        icon: "moon.zzz.fill",
-                        message: snoozeMessage,
-                        color: .green,
-                        onDismiss: { showSnoozeConfirmation = false }
-                    )
-                }
-
-                if isLoadingCoordinates {
-                    StatusMessage(
-                        icon: "loading",
-                        message: "Loading coordinates...",
-                        color: .blue
-                    )
-                }
-                
-                if isPlottingCoordinates {
-                    StatusMessage(
-                        icon: "loading",
-                        message: "Plotting path on map...",
-                        color: .orange
-                    )
-                }
-                
-                if let error = fileManager.uploadError, showUploadError {
-                    ErrorMessage(
-                        icon: "arrow.up.circle",
-                        message: error.localizedDescription,
-                        color: .red,
-                        onDismiss: {
-                            showUploadError = false
-                            fileManager.uploadError = nil
+            ForEach(toasts) { toast in
+                ToastRow(toast: toast)
+                    .task(id: toast.id) {
+                        try? await Task.sleep(for: .seconds(3))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            toasts.removeAll { $0.id == toast.id }
                         }
-                    )
-                }
-                
-                if let error = locationManager.mapRefreshError, showRefreshError {
-                    ErrorMessage(
-                        icon: "arrow.clockwise.circle",
-                        message: error.localizedDescription,
-                        color: .orange,
-                        onDismiss: {
-                            showRefreshError = false
-                            locationManager.mapRefreshError = nil
-                        }
-                    )
-                }
+                    }
+            }
         }
     }
 
@@ -1053,18 +981,77 @@ struct StatsPanel: View {
     }
 }
 
-// Updated error message component with auto-dismiss
-struct ErrorMessage: View {
-    let icon: String
+private enum MapOverlay {
+    case hidden
+    case loading
+    case shown([[MapCoordinate]])
+
+    var paths: [[MapCoordinate]] {
+        guard case .shown(let paths) = self else { return [] }
+        return paths
+    }
+
+    var isLoading: Bool {
+        guard case .loading = self else { return false }
+        return true
+    }
+
+    var isShown: Bool {
+        guard case .shown = self else { return false }
+        return true
+    }
+}
+
+struct Toast: Identifiable {
+    enum Kind {
+        case noQueuedFiles, healthSynced, snoozed, snoozeFailed, uploadFailed, refreshFailed
+    }
+
+    let id = UUID()
+    let kind: Kind
     let message: String
-    let color: Color
-    let onDismiss: () -> Void
-    
+
+    static var noQueuedFiles: Toast { Toast(kind: .noQueuedFiles, message: "No files queued for upload.") }
+    static func healthSynced(_ sampleCount: Int) -> Toast {
+        Toast(kind: .healthSynced, message: "\(sampleCount) health samples synced")
+    }
+    static func snoozed(until wakeTime: String) -> Toast {
+        Toast(kind: .snoozed, message: "Alerts snoozed until \(wakeTime)")
+    }
+    static func snoozeFailed(_ error: Error) -> Toast {
+        Toast(kind: .snoozeFailed, message: "Snooze failed: \(error.localizedDescription)")
+    }
+    static func uploadFailed(_ error: Error) -> Toast { Toast(kind: .uploadFailed, message: error.localizedDescription) }
+    static func refreshFailed(_ error: Error) -> Toast { Toast(kind: .refreshFailed, message: error.localizedDescription) }
+
+    var icon: String {
+        switch kind {
+        case .noQueuedFiles: "tray"
+        case .healthSynced: "heart.fill"
+        case .snoozed, .snoozeFailed: "moon.zzz.fill"
+        case .uploadFailed: "arrow.up.circle"
+        case .refreshFailed: "arrow.clockwise.circle"
+        }
+    }
+
+    var color: Color {
+        switch kind {
+        case .noQueuedFiles: .gray
+        case .healthSynced, .snoozed: .green
+        case .uploadFailed, .snoozeFailed: .red
+        case .refreshFailed: .orange
+        }
+    }
+}
+
+private struct ToastRow: View {
+    let toast: Toast
+
     var body: some View {
         HStack(alignment: .top, spacing: 4) {
-            Image(systemName: icon)
-                .foregroundColor(color)
-            Text(message)
+            Image(systemName: toast.icon)
+                .foregroundColor(toast.color)
+            Text(toast.message)
                 .font(.caption)
                 .foregroundColor(.white)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1072,20 +1059,12 @@ struct ErrorMessage: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(6)
-        .background(color.opacity(0.3))
+        .background(toast.color.opacity(0.3))
         .cornerRadius(6)
         .transition(.opacity)
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                withAnimation(.easeOut(duration: 0.3)) {
-                    onDismiss()
-                }
-            }
-        }
     }
 }
 
-// Add StatusMessage component after ErrorMessage
 struct StatusMessage: View {
     let icon: String
     let message: String
