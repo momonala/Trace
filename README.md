@@ -96,6 +96,7 @@ The server watchdog alerts (via Telegram) when heartbeats stop. When you're deli
 | **Minimum Accuracy** | Maximum allowed horizontal accuracy radius in meters. Points outside this threshold are discarded. Tighten in open areas; loosen in dense urban environments where 50m is often the best available. |
 | **History Lookback** | Days of historical data to fetch and display on the map. |
 | **Auto-Upload** | Enables the 60-second upload timer. Disable to accumulate data locally and upload manually. |
+| **API Token** | The server's `TRACE_API_TOKEN`, pasted once and kept in the iOS Keychain (this device only, readable after first unlock so background uploads work). Sent as `Authorization: Bearer <token>` on every request. **Test Connection** calls an authenticated endpoint, so it fails with HTTP 401 when the token is wrong. |
 
 ---
 
@@ -117,6 +118,7 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 |---|---|
 | `LocationManager.swift` | Motion detection, GPS pipeline, today's ghost trail fetch, Live Activity |
 | `ServerAPIManager.swift` | Upload queue, per-minute file batching, heartbeat |
+| `APITokenStore.swift` | Keychain-backed server API token; builds authorized requests |
 | `HealthManager.swift` | HealthKit queries for daily activity stats |
 | `HealthSyncManager.swift` | Health sample batch upload and 10-minute sync timer |
 | `AudioManager.swift` | Silent background audio keep-alive |
@@ -221,6 +223,8 @@ The companion server is a Flask app in [`incognita/`](incognita/). It receives u
 A background watchdog thread monitors the heartbeat endpoint. If no heartbeat arrives within 60 seconds, it sends a Telegram alert and escalates at 5m, 10m, and 1h intervals until the connection recovers. Alerts are suppressed between 11pm and 7am.
 
 ### Endpoints
+
+Every endpoint except the health check requires `Authorization: Bearer <TRACE_API_TOKEN>` and returns HTTP 401 without it.
 
 #### Health check
 ```http

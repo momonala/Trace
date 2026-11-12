@@ -108,7 +108,6 @@ class ServerAPIManager {
 
     var serverBaseURL: String { Self.baseURL }
     private var apiEndpoint: String { "\(Self.baseURL)/dump" }
-    private var statusEndpoint: String { "\(Self.baseURL)/status" }
     private var heartbeatEndpoint: String { "\(Self.baseURL)/heartbeat" }
     private var healthDataEndpoint: String { "\(Self.baseURL)health-data" }
     private var healthBatchEndpoint: String { "\(Self.baseURL)ios-dump" }
@@ -117,7 +116,6 @@ class ServerAPIManager {
     private var healthDataRangeEndpoint: String { "\(Self.baseURL)health-data-range" }
     private var snoozeEndpoint: String { "\(Self.baseURL)snooze" }
     private var coordinatesEndpoint: String { "\(Self.baseURL)coordinates" }
-    var statusURL: URL { URL(string: statusEndpoint)! }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
 
     private let jsonEncoder: JSONEncoder = {
@@ -213,7 +211,7 @@ class ServerAPIManager {
             return
         }
 
-        var request = URLRequest(url: url)
+        var request = APITokenStore.authorizedRequest(url)
         request.httpMethod = "POST"
 
         do {
@@ -398,7 +396,7 @@ class ServerAPIManager {
         guard let url = URL(string: healthBatchEndpoint) else { return }
         let data = try jsonEncoder.encode(payload)
 
-        var request = URLRequest(url: url)
+        var request = APITokenStore.authorizedRequest(url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = data
@@ -429,7 +427,7 @@ class ServerAPIManager {
     func fetchHealthSummary(for date: String = "today") async {
         guard let url = URL(string: "\(healthDataEndpoint)?date=\(date)") else { return }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            let (data, _) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(url))
             healthSummary = try JSONDecoder().decode(HealthSummary.self, from: data)
             Self.logger.info("Health summary fetched for \(date)")
         } catch {
@@ -441,7 +439,7 @@ class ServerAPIManager {
         guard let url = URL(string: "\(motionStatsEndpoint)?date=\(date)") else {
             throw URLError(.badURL)
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(url))
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw NSError(
@@ -461,7 +459,7 @@ class ServerAPIManager {
         guard let url = URL(string: "\(coordinatesEndpoint)?date=\(dayKey)") else {
             throw URLError(.badURL)
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(url))
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw NSError(
@@ -486,7 +484,7 @@ class ServerAPIManager {
         guard let url = URL(string: "\(motionStatsRangeEndpoint)?days=\(days)") else {
             throw URLError(.badURL)
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(url))
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw NSError(
@@ -504,7 +502,7 @@ class ServerAPIManager {
         guard let url = URL(string: "\(healthDataRangeEndpoint)?days=\(days)") else {
             throw URLError(.badURL)
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
+        let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(url))
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             throw NSError(
@@ -531,7 +529,7 @@ class ServerAPIManager {
     /// don't trigger Telegram alerts for the next `minutes` (1–1440).
     func snoozeAlerts(minutes: Int) async throws {
         guard let url = URL(string: snoozeEndpoint) else { throw URLError(.badURL) }
-        var request = URLRequest(url: url)
+        var request = APITokenStore.authorizedRequest(url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["minutes": minutes])
@@ -582,7 +580,7 @@ class ServerAPIManager {
             return NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
         }
 
-        var request = URLRequest(url: url)
+        var request = APITokenStore.authorizedRequest(url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData

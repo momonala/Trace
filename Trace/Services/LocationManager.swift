@@ -150,7 +150,7 @@ class LocationManager: NSObject {
         guard let finalURL = components.url else { return }
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: finalURL)
+            let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(finalURL))
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
             let payload = try JSONDecoder().decode(CoordinatesResponse.self, from: data)
             guard payload.status == "success" else { return }
@@ -209,7 +209,7 @@ class LocationManager: NSObject {
         guard let url = components.url else { throw URLError(.badURL) }
 
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(url))
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 throw NSError(domain: "com.trace", code: code, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP \(code)"])

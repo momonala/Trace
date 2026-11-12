@@ -6,6 +6,8 @@ struct SettingsView: View {
     @State private var healthSync = HealthSyncManager.shared
     @State private var alert: SettingsAlert?
     @State private var isTestingAPI = false
+    @State private var apiTokenDraft = ""
+    @State private var hasAPIToken = APITokenStore.token != nil
     @State private var currentTime = Date()
 
     private let timer = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -88,6 +90,15 @@ struct SettingsView: View {
                             .truncationMode(.middle)
                     }
 
+                    LabeledContent("API Token", value: hasAPIToken ? "Saved" : "Not set")
+
+                    SecureField("Paste new API token", text: $apiTokenDraft)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+
+                    Button("Save Token", action: saveAPIToken)
+                        .disabled(apiTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
                     Button(action: testAPI) {
                         HStack {
                             Text("Test Connection")
@@ -122,26 +133,25 @@ struct SettingsView: View {
         .font(.system(.caption, design: .monospaced))
     }
 
+    private func saveAPIToken() {
+        if APITokenStore.save(apiTokenDraft) {
+            apiTokenDraft = ""
+            hasAPIToken = true
+            alert = SettingsAlert(title: "API Token", message: "Token saved to the Keychain.")
+        } else {
+            hasAPIToken = false
+            alert = SettingsAlert(title: "API Token", message: "Couldn't save the token to the Keychain.")
+        }
+    }
+
     private func testAPI() {
         isTestingAPI = true
 
         Task {
             let message: String
             do {
-                let (data, response) = try await URLSession.shared.data(from: ServerAPIManager.shared.statusURL)
-                if let httpResponse = response as? HTTPURLResponse {
-                    if (200...299).contains(httpResponse.statusCode) {
-                        if let statusString = String(data: data, encoding: .utf8) {
-                            message = "Connection successful!\nServer status: \(statusString)"
-                        } else {
-                            message = "Connection successful!"
-                        }
-                    } else {
-                        message = "Server error: HTTP \(httpResponse.statusCode)"
-                    }
-                } else {
-                    message = "Invalid server response"
-                }
+                _ = try await ServerAPIManager.shared.fetchMotionStats()
+                message = "Connected, and the server accepted the API token."
             } catch {
                 message = "Connection failed: \(error.localizedDescription)"
             }
