@@ -331,6 +331,14 @@ struct ContentView: View {
         }
     }
 
+    private func refreshTodayPath() async {
+        do {
+            try await locationManager.refreshTodayPath()
+        } catch {
+            show(.refreshFailed(error))
+        }
+    }
+
     private func refreshMap() {
         if case .shown = mapOverlay {
             mapOverlay = .hidden
@@ -419,7 +427,7 @@ struct ContentView: View {
 
                 VStack {
                     HStack {
-                        StatsPanel(toasts: $toasts, isLoadingMap: mapOverlay.isLoading)
+                        StatsPanel(toasts: $toasts, isLoadingMap: mapOverlay.isLoading || locationManager.isLoadingTodayPath)
                         .background(Color.black.opacity(0.7))
                         .cornerRadius(10)
                         .fixedSize(horizontal: true, vertical: false)
@@ -520,7 +528,7 @@ struct ContentView: View {
             autoFocusOnStartupIfNeeded()
             OrientationLock.apply(orientationMask(for: selectedTab))
             Task { await HealthManager.shared.requestPermissionsAndLoad() }
-            Task { await locationManager.refreshTodayPath() }
+            Task { await refreshTodayPath() }
         }
         .onChange(of: selectedTab) { _, tab in
             OrientationLock.apply(orientationMask(for: tab))
@@ -535,7 +543,7 @@ struct ContentView: View {
             OrientationLock.apply(orientationMask(for: selectedTab))
             Task {
                 async let health: Void = HealthManager.shared.refresh()
-                async let trail: Void = locationManager.refreshTodayPath()
+                async let trail: Void = refreshTodayPath()
                 async let sync = HealthSyncManager.shared.syncNow()
                 _ = await (health, trail, sync)
             }
@@ -1056,7 +1064,13 @@ struct Toast: Identifiable {
         Toast(kind: .snoozeFailed, message: "Snooze failed: \(error.localizedDescription)")
     }
     static func uploadFailed(_ error: Error) -> Toast { Toast(kind: .uploadFailed, message: error.localizedDescription) }
-    static func refreshFailed(_ error: Error) -> Toast { Toast(kind: .refreshFailed, message: error.localizedDescription) }
+    static func refreshFailed(_ error: Error) -> Toast {
+        let unreachable: Set<URLError.Code> = [.notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost, .timedOut]
+        if let urlError = error as? URLError, unreachable.contains(urlError.code) {
+            return Toast(kind: .refreshFailed, message: "Can't reach server")
+        }
+        return Toast(kind: .refreshFailed, message: error.localizedDescription)
+    }
 
     var icon: String {
         switch kind {
