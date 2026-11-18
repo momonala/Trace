@@ -70,6 +70,7 @@ class LocationManager: NSObject {
     var error: Error?
     var lastHeartbeatTimestamp: Date? = nil
     var todayPath: [[CLLocationCoordinate2D]] = []
+    var isLoadingTodayPath = false
 
     // Persisted settings — didSet writes to UserDefaults
     var minimumAccuracy: Double {
@@ -140,27 +141,30 @@ class LocationManager: NSObject {
         )
     }
 
-    func refreshTodayPath() async {
+    func refreshTodayPath() async throws {
+        guard !isLoadingTodayPath else { return }
+        isLoadingTodayPath = true
+        defer { isLoadingTodayPath = false }
+
         let midnight = Calendar.current.startOfDay(for: Date())
         let hoursSinceMidnight = max(1, Int(ceil(Date().timeIntervalSince(midnight) / 3600)))
 
-        guard let url = URL(string: "\(fileManager.serverBaseURL)/coordinates"),
-              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        var components = URLComponents(string: "\(fileManager.serverBaseURL)/coordinates")!
         components.queryItems = [URLQueryItem(name: "lookback_hours", value: String(hoursSinceMidnight))]
-        guard let finalURL = components.url else { return }
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(finalURL))
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { return }
-            let payload = try JSONDecoder().decode(CoordinatesResponse.self, from: data)
-            guard payload.status == "success" else { return }
-            todayPath = payload.paths.map { seg in
-                seg.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-            }
-            Self.logger.info("Today path loaded: \(payload.count) points")
-        } catch {
-            Self.logger.error("Today path refresh failed: \(error.localizedDescription)")
+        let (data, response) = try await URLSession.shared.data(for: APITokenStore.authorizedRequest(components.url!))
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 502
+        guard (200...299).contains(statusCode) else {
+            throw NSError(domain: "com.trace", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Today trail failed: HTTP \(statusCode)"])
         }
+        let payload = try JSONDecoder().decode(CoordinatesResponse.self, from: data)
+        guard payload.status == "success" else {
+            throw NSError(domain: "com.trace", code: 500, userInfo: [NSLocalizedDescriptionKey: "Today trail failed: \(payload.status)"])
+        }
+        todayPath = payload.paths.map { seg in
+            seg.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+        }
+        Self.logger.info("Today path loaded: \(payload.count) points")
     }
 
     @objc private func handleAppTermination() {
