@@ -377,6 +377,7 @@ class ServerAPIManager {
                     context.delete(file)
                     try context.save()
                 }
+                queuedFiles -= 1
             }
 
             if !filesToUpload.isEmpty, failure == nil {
