@@ -444,13 +444,11 @@ struct ContentView: View {
                                 }
                             }
 
-                            Button(action: uploadFiles) {
-                                MapFloatingButton(isBusy: fileManager.isUploading) {
-                                    Image(systemName: "icloud.and.arrow.up")
-                                        .foregroundColor(.white)
-                                }
-                            }
-                            .disabled(fileManager.isUploading)
+                            UploadButton(
+                                isUploading: fileManager.isUploading,
+                                remaining: fileManager.queuedFiles,
+                                action: uploadFiles
+                            )
 
                             Button(action: refreshMap) {
                                 MapFloatingButton(isBusy: mapOverlay.isLoading) {
@@ -458,7 +456,7 @@ struct ContentView: View {
                                         .foregroundColor(.white)
                                 }
                             }
-                            .disabled(mapOverlay.isLoading)
+                            .allowsHitTesting(!mapOverlay.isLoading)
 
                             Button(action: showMotionStats) {
                                 MapFloatingButton(isBusy: motionStatsLoad?.isLoading ?? false) {
@@ -466,7 +464,7 @@ struct ContentView: View {
                                         .foregroundColor(.white)
                                 }
                             }
-                            .disabled(motionStatsLoad?.isLoading ?? false)
+                            .allowsHitTesting(!(motionStatsLoad?.isLoading ?? false))
 
                             Button(action: { showSnoozeSheet = true }) {
                                 MapFloatingButton(isBusy: false) {
@@ -756,6 +754,9 @@ private struct MotionStatsOverlay: View {
     }
 }
 
+private let mapButtonDiameter: CGFloat = 44
+private let mapButtonGlass = Glass.regular.tint(.black.opacity(0.45)).interactive()
+
 private struct MapFloatingButton<Content: View>: View {
     let isBusy: Bool
     @ViewBuilder let content: () -> Content
@@ -764,15 +765,48 @@ private struct MapFloatingButton<Content: View>: View {
         Group {
             if isBusy {
                 ProgressView()
-                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    .scaleEffect(0.8)
+                    .controlSize(.small)
+                    .tint(.white)
             } else {
                 content()
             }
         }
-        .padding(12)
-        .background(Color.black.opacity(0.7))
-        .clipShape(Circle())
+        .frame(width: mapButtonDiameter, height: mapButtonDiameter)
+        .glassEffect(mapButtonGlass, in: .circle)
+    }
+}
+
+private struct UploadButton: View {
+    let isUploading: Bool
+    let remaining: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: "icloud.and.arrow.up")
+                    .symbolEffect(.bounce.up.byLayer, options: .repeat(.periodic(delay: 0.2)), isActive: isUploading)
+                if isUploading {
+                    Text("\(remaining)")
+                        .font(.headline.weight(.bold))
+                        .fontDesign(.rounded)
+                        .monospacedDigit()
+                        .contentTransition(.numericText(countsDown: true))
+                        .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
+                        .transition(.blurReplace)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, isUploading ? 14 : 0)
+            .frame(minWidth: mapButtonDiameter, minHeight: mapButtonDiameter)
+            .glassEffect(mapButtonGlass, in: .capsule)
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(!isUploading)
+        .animation(.smooth, value: isUploading)
+        .animation(.snappy, value: remaining)
+        .fixedSize()
+        .frame(width: mapButtonDiameter, height: mapButtonDiameter, alignment: .trailing)
     }
 }
 
