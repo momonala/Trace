@@ -18,7 +18,7 @@ iOS suspends background apps aggressively. To keep the tracking pipeline alive, 
 
 ### Data Pipeline
 
-GPS points are written to CoreData locally and grouped into per-minute `HourlyFile` batches. Every 60 seconds (when auto-upload is enabled), completed batches are sent to the server's `/dump` endpoint as GeoJSON. On success, the local point data is cleared. Failed uploads are retried on the next cycle.
+GPS points are written to CoreData locally and grouped into per-minute `HourlyFile` batches. Every 60 seconds (when auto-upload is enabled), completed batches are sent to the server's `/dump` endpoint as GeoJSON, up to 4 requests at a time. On success, the local point data is cleared. Failed uploads are retried on the next cycle.
 
 The map view pulls historical paths from the server's `/coordinates` endpoint and renders them as polylines. Lookback range is configurable.
 

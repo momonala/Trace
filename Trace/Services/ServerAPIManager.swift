@@ -117,6 +117,7 @@ class ServerAPIManager {
     private var snoozeEndpoint: String { "\(Self.baseURL)snooze" }
     private var coordinatesEndpoint: String { "\(Self.baseURL)coordinates" }
     private let heartbeatIntervalSeconds: TimeInterval = 3.0
+    private static let maxConcurrentUploads = 4
 
     private let jsonEncoder: JSONEncoder = {
         let e = JSONEncoder()
@@ -365,19 +366,40 @@ class ServerAPIManager {
             let filesToUpload = try context.fetch(request)
             Self.logger.info("Found \(String(describing: filesToUpload.count)) files with points to upload")
 
-            for file in filesToUpload {
-                let points = file.points?.allObjects as? [LocationPoint] ?? []
-                if let error = await upload(points) {
-                    failure = error
-                    continue
-                }
-                points.forEach(context.delete)
-                try context.save()
-                if file.points?.count == 0, file != currentHourlyFile {
-                    context.delete(file)
+            try await withThrowingTaskGroup(of: (Int, Error?).self) { group in
+                var sentPoints: [Int: [LocationPoint]] = [:]
+                var nextIndex = 0
+                while true {
+                    while sentPoints.count < Self.maxConcurrentUploads, nextIndex < filesToUpload.count {
+                        let index = nextIndex
+                        nextIndex += 1
+                        let points = filesToUpload[index].points?.allObjects as? [LocationPoint] ?? []
+                        let uploadRequest: URLRequest?
+                        do {
+                            uploadRequest = try makeUploadRequest(points)
+                        } catch {
+                            failure = error
+                            continue
+                        }
+                        sentPoints[index] = points
+                        group.addTask { (index, await Self.send(uploadRequest)) }
+                    }
+
+                    guard let (index, error) = try await group.next() else { break }
+                    let points = sentPoints.removeValue(forKey: index) ?? []
+                    if let error {
+                        failure = error
+                        continue
+                    }
+                    let file = filesToUpload[index]
+                    points.forEach(context.delete)
                     try context.save()
+                    if file.points?.count == 0, file != currentHourlyFile {
+                        context.delete(file)
+                        try context.save()
+                    }
+                    queuedFiles -= 1
                 }
-                queuedFiles -= 1
             }
 
             if !filesToUpload.isEmpty, failure == nil {
@@ -547,9 +569,9 @@ class ServerAPIManager {
         Self.logger.info("Alerts snoozed for \(minutes)m")
     }
 
-    private func upload(_ points: [LocationPoint]) async -> Error? {
+    private func makeUploadRequest(_ points: [LocationPoint]) throws -> URLRequest? {
         guard let url = URL(string: apiEndpoint) else {
-            return NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
+            throw NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
         }
 
         if points.isEmpty {
@@ -578,14 +600,18 @@ class ServerAPIManager {
         let payload = LocationsPayload(locations: locationFeatures)
 
         guard let jsonData = try? jsonEncoder.encode(payload) else {
-            return NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
+            throw NSError(domain: "com.trace", code: 400, userInfo: [NSLocalizedDescriptionKey: "Server error: HTTP 400"])
         }
 
         var request = APITokenStore.authorizedRequest(url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData
+        return request
+    }
 
+    private nonisolated static func send(_ request: URLRequest?) async -> Error? {
+        guard let request else { return nil }
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
 
