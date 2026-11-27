@@ -38,7 +38,9 @@ The **Replay** tab scrubs through a single day's GPS track: pick a date, drag a 
 
 The stats panel shows today's step count, active calories, walking/running distance, and flights climbed. Values come from HealthKit locally (refreshed on foreground and every 10 minutes) and from the server's `/health-data` summary after a successful upload.
 
-Health data is pushed to `/ios-dump` on app foreground, when tapping upload (with a success toast), and automatically every 10 minutes via `HealthSyncManager`. Each scheduled run also refreshes local HealthKit totals and re-fetches the server summary.
+Health data is pushed to `/ios-dump` on app foreground, when tapping upload (with a toast when new samples were sent), and automatically every 10 minutes via `HealthSyncManager`. Each scheduled run also refreshes local HealthKit totals and re-fetches the server summary.
+
+Sync is incremental: an `HKAnchoredObjectQuery` per type returns every sample added since the last saved anchor, whatever day it belongs to, so evening steps and late Apple Watch samples still reach the server after midnight. Samples go up in pages of 5,000 and the anchor is saved only after the server accepts a page, so a failed or interrupted sync resumes where it stopped. With no saved anchor (first run or reinstall) the app uploads its full HealthKit history; the server ignores sample UUIDs it already has.
 
 ### Motion Stats
 
@@ -120,7 +122,7 @@ Settings (`minimumAccuracy`, `lookbackDays`, `requiredMotionSeconds`) are persis
 | `ServerAPIManager.swift` | Upload queue, per-minute file batching, heartbeat |
 | `APITokenStore.swift` | Keychain-backed server API token; builds authorized requests |
 | `HealthManager.swift` | HealthKit queries for daily activity stats |
-| `HealthSyncManager.swift` | Health sample batch upload and 10-minute sync timer |
+| `HealthSyncManager.swift` | Incremental (anchored) health sample upload and 10-minute sync timer |
 | `AudioManager.swift` | Silent background audio keep-alive |
 | `Persistence.swift` | CoreData stack (`LocationPoint`, `HourlyFile`) |
 | `ContentView.swift` | Map view (MapKit polylines, ghost trail overlay, animated highlight), stats panel, motion-stats overlay |

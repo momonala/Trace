@@ -1,9 +1,7 @@
 import Foundation
 import HealthKit
 
-/// Fetches all of today's raw HealthKit samples for the four tracked quantity types
-/// and POSTs them as a single batch to /ios-dump.
-/// Triggered on foreground, manual upload, and a 10-minute background timer.
+/// Uploads HealthKit samples added since the last synced anchor to /ios-dump (see README, HealthKit Stats).
 @Observable
 @MainActor
 class HealthSyncManager {
@@ -11,6 +9,7 @@ class HealthSyncManager {
     private static let logger = LoggerUtil(category: "HealthSyncManager")
     private static let batchIndexKey = "healthSyncBatchIndex"
     private static let autoSyncIntervalSeconds: TimeInterval = 10 * 60
+    private static let pageSize = 5_000
 
     var lastSyncAt: Date?
 
@@ -36,7 +35,7 @@ class HealthSyncManager {
         }
     }
 
-    /// Uploads today's samples and pulls the server summary.
+    /// Uploads new samples and pulls the server summary.
     /// HealthKit statistics are intentionally not refreshed here — background HKStatisticsQuery
     /// returns zero data without background delivery registration, which would overwrite the
     /// Live Activity with zeros. Stats are refreshed only when the app is foregrounded.
@@ -55,55 +54,93 @@ class HealthSyncManager {
 
         guard HKHealthStore.isHealthDataAvailable() else { return nil }
 
-        let now = Date()
-        let startOfDay = Calendar.current.startOfDay(for: now)
-        let predicate = HKQuery.predicateForSamples(withStart: startOfDay, end: now)
-
+        var uploadedCount = 0
         do {
-            var allSamples: [FlatSample] = []
             for exportType in HealthKitExportType.allCases {
-                let samples = try await fetchSamples(type: exportType, predicate: predicate)
-                allSamples.append(contentsOf: samples)
+                uploadedCount += try await syncPages(for: exportType)
             }
-
-            guard !allSamples.isEmpty else {
-                Self.logger.info("No health samples today — skipping upload")
-                return nil
-            }
-
-            let completedIndex = batchIndex
-            let payload = HealthBatchPayload(batchIndex: completedIndex, samples: allSamples)
-            Self.logger.info("Uploading \(allSamples.count) health samples (batch \(completedIndex))")
-
-            try await ServerAPIManager.shared.uploadHealthBatch(payload)
-
-            batchIndex += 1
-            lastSyncAt = now
-            Self.logger.info("Health sync complete — batch \(completedIndex)")
-            return allSamples.count
         } catch {
-            Self.logger.error("Health sync failed: \(error.localizedDescription)")
+            Self.logger.error("Health sync failed after \(uploadedCount) samples: \(error.localizedDescription)")
+            return uploadedCount > 0 ? uploadedCount : nil
+        }
+
+        lastSyncAt = Date()
+        guard uploadedCount > 0 else {
+            Self.logger.info("No new health samples")
             return nil
+        }
+        Self.logger.info("Health sync complete — \(uploadedCount) samples")
+        return uploadedCount
+    }
+
+    private func syncPages(for exportType: HealthKitExportType) async throws -> Int {
+        var uploadedCount = 0
+        while true {
+            let page = try await fetchPage(type: exportType, anchor: loadAnchor(for: exportType))
+            let samples = page.samples
+            if !samples.isEmpty {
+                let completedIndex = batchIndex
+                Self.logger.info("Uploading \(samples.count) \(exportType.rawValue) samples (batch \(completedIndex))")
+                try await ServerAPIManager.shared.uploadHealthBatch(
+                    HealthBatchPayload(batchIndex: completedIndex, samples: samples)
+                )
+                batchIndex += 1
+                uploadedCount += samples.count
+            }
+            try saveAnchor(page.anchor, for: exportType)
+            if page.objectCount < Self.pageSize { return uploadedCount }
         }
     }
 
-    private func fetchSamples(type: HealthKitExportType, predicate: NSPredicate) async throws -> [FlatSample] {
+    private func fetchPage(
+        type: HealthKitExportType,
+        anchor: HKQueryAnchor?
+    ) async throws -> AnchoredPage {
         try await withCheckedThrowingContinuation { continuation in
-            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
-            let query = HKSampleQuery(
-                sampleType: type.hkQuantityType,
-                predicate: predicate,
-                limit: HKObjectQueryNoLimit,
-                sortDescriptors: [sort]
-            ) { _, samples, error in
+            let query = HKAnchoredObjectQuery(
+                type: type.hkQuantityType,
+                predicate: nil,
+                anchor: anchor,
+                limit: Self.pageSize
+            ) { _, samples, deletedObjects, newAnchor, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return
                 }
-                let flat = (samples ?? []).compactMap { FlatSample(from: $0, exportType: type) }
-                continuation.resume(returning: flat)
+                let rawSamples = samples ?? []
+                continuation.resume(returning: AnchoredPage(
+                    samples: rawSamples.compactMap { FlatSample(from: $0, exportType: type) },
+                    objectCount: rawSamples.count + (deletedObjects ?? []).count,
+                    anchor: newAnchor
+                ))
             }
             store.execute(query)
         }
     }
+
+    private static func anchorKey(for type: HealthKitExportType) -> String {
+        "healthSyncAnchor.\(type.rawValue)"
+    }
+
+    private func loadAnchor(for type: HealthKitExportType) -> HKQueryAnchor? {
+        guard let data = UserDefaults.standard.data(forKey: Self.anchorKey(for: type)) else { return nil }
+        do {
+            return try NSKeyedUnarchiver.unarchivedObject(ofClass: HKQueryAnchor.self, from: data)
+        } catch {
+            Self.logger.error("Unreadable \(type.rawValue) anchor, re-syncing full history: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func saveAnchor(_ anchor: HKQueryAnchor?, for type: HealthKitExportType) throws {
+        guard let anchor else { return }
+        let data = try NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true)
+        UserDefaults.standard.set(data, forKey: Self.anchorKey(for: type))
+    }
+}
+
+private struct AnchoredPage {
+    let samples: [FlatSample]
+    let objectCount: Int
+    let anchor: HKQueryAnchor?
 }
